@@ -15,8 +15,12 @@ geojson <- rjson::fromJSON(file=url)
 mapa_medellin<-st_read('barrios_cluster.shp')
 prediccion<-read.csv("datos_pronostico_2021_2022.csv")
 prediccion$FECHA_ACCIDENTE_ <-(as.POSIXct(prediccion$FECHA_ACCIDENTE, format="%Y-%m-%d", tz="UTC")) 
-
-
+names(mapa_medellin)<-c("BARRIO","AREA","Perimetro","ACCIDENTES 2017",
+                        "ACCIDENTES 2018","ACCIDENTES 2019",
+                        "MUERTES 2017","MUERTES 2018","MUERTES 2019",
+                        "GRUPOS"
+                        )
+mapa_medellin$CLUSTER<-as.factor(mapa_medellin$CLUSTER)
 
 usuario<- fluidPage(
   dashboardPage(
@@ -48,7 +52,7 @@ usuario<- fluidPage(
                                 fluidRow( uiOutput("text_geo") ), 
                                 fluidRow(column(6,
                                                 selectInput(inputId ="cluster" ,label= "Seleccione el cluster",
-                                                            choices =c("Grupo 1","Grupo 2"),multiple = TRUE)),
+                                                            choices =unique(mapa_medellin$CLUSTER),multiple = TRUE)),
                                          column(6, selectInput(inputId ="estado" ,label= "Seleccione una Variable",
                                                                choices =names(mapa_medellin)[-c(1,11)],multiple = F) ) )
                                 ,fluidRow( plotlyOutput("map_plot") )
@@ -116,13 +120,21 @@ allowfullscreen></iframe>
 
          ")
   })
+
   output$map_plot<-renderPlotly({
-    g <- list(
-      fitbounds = "locations",
-      visible = FALSE
-    )
-    fig <- plot_ly(mapa_medellin, fillcolor=~get(input$estado) ,showlegend = FALSE,alpha = 1) 
+    filtro_<- is.null(input$cluster) | is.element(mapa_medellin$CLUSTER,input$cluster)
+    mapa_medellin_temp=mapa_medellin[filtro_,]
+    fig <- ggplotly(
+      ggplot(mapa_medellin_temp) +
+        geom_sf(aes(fill = get(input$estado) ))+
+        # theme(legend.title = input$estado)+
+        labs(fill=input$estado)
+      
+    ) 
+    
     fig
+    
+
 
   } )
 
