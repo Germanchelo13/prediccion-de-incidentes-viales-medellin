@@ -1,0 +1,14 @@
+name: prediccion-de-incidentes-viales-medellin
+title: prediccion-de-incidentes-viales-medellin
+username:
+account: germanalonso
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 7734417
+bundleId: 6556022
+url: https://germanalonso.shinyapps.io/prediccion-de-incidentes-viales-medellin/
+when: 1669435804.12713
+lastSyncTime: 1669435804.12715
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .ipynb_checkpoints/analisis_inicial-checkpoint.ipynb|analisis_inicial.ipynb|Barrio_Vereda.cpg|Barrio_Vereda.dbf|Barrio_Vereda.prj|Barrio_Vereda.shp|Barrio_Vereda.shx|incidentes_viales.csv|planeacion_gdb/planeacion_gdb.cpg|planeacion_gdb/planeacion_gdb.dbf|planeacion_gdb/planeacion_gdb.prj|planeacion_gdb/planeacion_gdb.shp|planeacion_gdb/planeacion_gdb.shx

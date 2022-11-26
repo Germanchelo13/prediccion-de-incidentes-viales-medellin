@@ -1,6 +1,5 @@
-library(DT) # print table beutefull
-library(sf) # manupulación geolocalizaciones
-library(tmap)  # graficos interactivos de mapas
+# library(sf) # manupulación geolocalizaciones
+# library(tmap)  # graficos interactivos de mapas
 library(dplyr) # manejo de funciones
 library(shiny) # aplicacion
 library(plotly) # graficos 
@@ -55,7 +54,7 @@ usuario<- fluidPage(
       tabItem(tabName = 'series',
               tabBox(id='t3',width= 12,tabPanel(
                 HTML('<i class="fa-duotone fa-chart-scatter"></i>Numeric'),icon=icon('chart-line'),
-                fluidPage( fluidRow( br(),
+                fluidPage( fluidRow(column( 6,
                                      daterangepicker("rangos_fecha",
                                                      "Seleccione entre que fechas quiere los accidentes",
                                        style = paste0(
@@ -66,14 +65,9 @@ usuario<- fluidPage(
                                        end = max(prediccion$FECHA_ACCIDENTE_),
                                        min = min(prediccion$FECHA_ACCIDENTE_),
                                        max= max(prediccion$FECHA_ACCIDENTE_)
-                                     ),
-                                     uiOutput('descripcion_numerica'),
-                                     plotlyOutput('serie_plot'), br(),br()
-                                                            
-                                                  ) 
-                                                )
-              )
-              
+                                     )),column(6,uiOutput('resumen'))) ,
+                                     fluidRow(plotlyOutput('serie_plot')) 
+                                                ))
               )),
       # item descripcion 
       tabItem(tabName = 'intro',fluidRow(style='height:5vh'),
@@ -120,7 +114,7 @@ allowfullscreen></iframe>
   })
 
   # mapa university 
-  output$map_plot <- renderTmap({
+#  output$map_plot <- renderTmap({
   #   
   #   filtro<-is.element(datos_geo$CLUSTER,  input$cluster) | is.null(input$cluster)
   #   
@@ -133,10 +127,10 @@ allowfullscreen></iframe>
   #   tm_shape(mapa_usa )+
   #     tm_polygons('Cluster_top',popup.vars= c("mean_TUITFTE" ,
   #                                             "mean_INEXPFTE", "Cluster_1","Cluster_2","Cluster_3","Cluster_4"))
-    }
-    )
-  observeEvent(input$map_plot_marker_click,{
-    click_<-input$map_plot_marker_click
+ #   }
+#    )
+#  observeEvent(input$map_plot_marker_click,{
+#    click_<-input$map_plot_marker_click
     # filtro<-paste('X',datos$OPEID,sep='')==click_$id
     # uni_click<-datos[filtro,c('address','INSTURL')]
     # filtro<-!is.element(values$universidad,uni_click[1]$address)
@@ -159,18 +153,55 @@ allowfullscreen></iframe>
     #   print(text_)
     #   tagList(text_)
    # })
-  })
+ # })
   #,escape=1)
+  output$resumen<- renderUI({
+    fechas_<-input$rangos_fecha
+    filtro_fecha<-(prediccion$FECHA_ACCIDENTE_>=fechas_[1] &
+                     prediccion$FECHA_ACCIDENTE_<=fechas_[2] )   
+    texto_<-paste("<br> Resumen estadístico Número de accidentes: </br>
+    <br> Entre las fechas ",fechas_[1]," y " ,fechas_[2],"</br>",
+                  "<style>
+  .tb { border-collapse: collapse; width:100px; }
+  .tb th, .tb td { padding: 5px; border: solid 1px #777; }
+  .tb th { background-color: lightblue; }
+</style>
+                  <table class='tb'><tr>",
+                  "<th scope='row'> Tipo accidente </th>",
+                   "<th> Total </th>
+                  <th> Promedio </th>
+                  <th> Q1 </th>
+                  <th> Q2 </th>
+                  <th> Q3 </th>
+                  </tr><tr>",sep="" )
+    for (clase in unique(prediccion$CLASE_ACCIDENTE)){
+      filtro_clase <-prediccion$CLASE_ACCIDENTE==clase & filtro_fecha
+      texto_<-paste(texto_, "<th>", clase,"</th><td>", 
+                    as.character(round(sum(prediccion[filtro_clase ,"Y"])) )
+                    ,"</td>",sep="" )
+      texto_<-paste(texto_, "<td>", 
+                    as.character(round(mean(prediccion[filtro_clase,"Y"])) )
+                    ,"</td>",sep="" )
+      texto_<-paste(texto_, "<td>", 
+                    as.character(round( quantile(prediccion[filtro_clase,"Y"],0.25)) )
+                    ,"</td>",sep="" )
+      texto_<-paste(texto_, "<td>", 
+                    as.character(round( quantile(prediccion[filtro_clase,"Y"],0.5)) )
+                    ,"</td>",sep="" )
+      texto_<-paste(texto_, "<td>", 
+                    as.character(round( quantile(prediccion[filtro_clase,"Y"],0.75)) )
+                    ,"</td></tr>",sep="" )
+    }
+    texto_<-paste(texto_," </table>",sep="" )
+    HTML(texto_)
+    
+  })
 
   output$serie_plot<- renderPlotly({
-
     fechas_<-input$rangos_fecha
-    print(fechas_)    
     filtro_inicio<-prediccion[,'FECHA_ACCIDENTE_']>=fechas_[1]
     filtro_fin<-prediccion[,'FECHA_ACCIDENTE_']<=fechas_[2]
     prediccion_temp<-prediccion[filtro_inicio & filtro_fin,] 
-    print(sum(filtro_fin))
-    print(sum(filtro_inicio))
     
     plot_ly() %>%
       add_lines(x=prediccion_temp[,'FECHA_ACCIDENTE_'], y=prediccion_temp[,"Y"],
@@ -179,10 +210,6 @@ allowfullscreen></iframe>
              yaxis=list(title= "Número de accidentes en Medellín." ),
              legend=list(title=list(text='Tipo de accidente.')))
   })
-  
-
-
-  
 }
 shinyApp(
   ui = usuario,
