@@ -1,5 +1,9 @@
 library(sf) # manupulación geolocalizaciones
+library(mapview)
+
+
 # library(tmap)  # graficos interactivos de mapas
+library(leaflet)
 library(dplyr) # manejo de funciones
 library(shiny) # aplicacion
 library(plotly) # graficos 
@@ -10,17 +14,38 @@ library(rjson)
 library(shinycssloaders)# to add a loader while graph is populating
 
 url_github<-"https://github.com/Germanchelo13/prediccion-de-incidentes-viales-medellin.git"
-url <- 'https://raw.githubusercontent.com/plotly/datasets/master/election.geojson'
-geojson <- rjson::fromJSON(file=url)
+# url <- 'https://raw.githubusercontent.com/plotly/datasets/master/election.geojson'
+# geojson <- rjson::fromJSON(file=url)
 mapa_medellin<-st_read('barrios_cluster.shp')
 prediccion<-read.csv("datos_pronostico_2021_2022.csv")
 prediccion$FECHA_ACCIDENTE_ <-(as.POSIXct(prediccion$FECHA_ACCIDENTE, format="%Y-%m-%d", tz="UTC")) 
-names(mapa_medellin)<-c("BARRIO","AREA","Perimetro","ACCIDENTES 2017",
-                        "ACCIDENTES 2018","ACCIDENTES 2019",
-                        "MUERTES 2017","MUERTES 2018","MUERTES 2019",
-                        "GRUPOS"
+var_clusters<-c('ACCIDENTES_1000KM2_2015', 'ACCIDENTES_1000KM2_2016',
+                'ACCIDENTES_1000KM2_2017', 'ACCIDENTES_1000KM2_2018',
+                'ACCIDENTES_1000KM2_2019', 'MUERTES_2015', 'MUERTES_2016',
+                'MUERTES_2017', 'MUERTES_2018', 'MUERTES_2019')
+names(mapa_medellin)<-c('NOMBRE', 'SHAPEAREA', 'SHAPELEN', 
+                        'ACCIDENTES_1000KM2_2015', 'ACCIDENTES_1000KM2_2016',
+                        'ACCIDENTES_1000KM2_2017', 'ACCIDENTES_1000KM2_2018',
+                        'ACCIDENTES_1000KM2_2019', 'MUERTES_2015', 'MUERTES_2016',
+                        'MUERTES_2017', 'MUERTES_2018', 'MUERTES_2019', 'CLUSTER','geometry'
                         )
-mapa_medellin$CLUSTER<-as.factor(mapa_medellin$CLUSTER)
+mapa_medellin$descripcion<-paste(
+  "Barrio: ", mapa_medellin$NOMBRE,
+  "<br> Accidentes por 1000 km2: ",
+  "<br> 2015: ",mapa_medellin$ACCIDENTES_1000KM2_2015,
+  "<br> 2016:", mapa_medellin$ACCIDENTES_1000KM2_2016,
+  "<br> 2017:", mapa_medellin$ACCIDENTES_1000KM2_2017,
+  "<br> 2018:", mapa_medellin$ACCIDENTES_1000KM2_2018,
+  "<br> 2019:", mapa_medellin$ACCIDENTES_1000KM2_2019,
+  "<br> Muertes: ",
+  "<br> 2015: ",mapa_medellin$MUERTES_2015,
+  "<br> 2016:", mapa_medellin$MUERTES_2016,
+  "<br> 2017:", mapa_medellin$MUERTES_2017,
+  "<br> 2018:", mapa_medellin$MUERTES_2018,
+  "<br> 2019:", mapa_medellin$MUERTES_2019,
+  sep=""
+  
+  )
 
 usuario<- fluidPage(
   dashboardPage(
@@ -54,8 +79,8 @@ usuario<- fluidPage(
                                                 selectInput(inputId ="cluster" ,label= "Seleccione el cluster",
                                                             choices =unique(mapa_medellin$CLUSTER),multiple = TRUE)),
                                          column(6, selectInput(inputId ="estado" ,label= "Seleccione una Variable",
-                                                               choices =names(mapa_medellin)[-c(1,11)],multiple = F) ) )
-                                ,fluidRow( plotlyOutput("map_plot") )
+                                                               choices =var_clusters,multiple = F) ) )
+                                ,fluidRow( mapviewOutput("map_plot") )
                                ))
                      
               )),
@@ -120,21 +145,21 @@ allowfullscreen></iframe>
 
          ")
   })
+  
 
-  output$map_plot<-renderPlotly({
-    filtro_<- is.null(input$cluster) | is.element(mapa_medellin$CLUSTER,input$cluster)
-    mapa_medellin_temp=mapa_medellin[filtro_,]
-    fig <- ggplotly(
-      ggplot(mapa_medellin_temp) +
-        geom_sf(aes(fill = get(input$estado) ))+
-        # theme(legend.title = input$estado)+
-        labs(fill=input$estado)
-      
-    ) 
+  output$map_plot<-renderMapview({
+    # reactive(input$cluster)
+      # filtro_<- is.null(input[["cluster"]]) | is.element(mapa_medellin[,"CLUSTER"],input[["cluster"]])
+    # mapa_medellin_temp=mapa_medellin[filtro_,]
+        # fig <- ggplotly(
+        #   ggplot(mapa_medellin_temp) +
+        #     geom_sf(aes(fill = get(input$estado) ))+
+        #     labs(fill=input$estado)) 
+        # fig<-fig %>%
+        #   add_trace()
+    # mapview(mapa_medellin_temp,zcol=input[["estador"]])
+    mapview(mapa_medellin)#zcol=input[["estador"]])
     
-    fig
-    
-
 
   } )
 
