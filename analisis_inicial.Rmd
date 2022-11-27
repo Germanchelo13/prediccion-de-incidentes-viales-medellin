@@ -986,15 +986,6 @@ En conclusion, podemos ver que los clusters si agrupan los barrios dependiendo d
 
 
 
-```{python}
-# import jupytext
-# jupytext --to analisis_inicial.Rmd 
-```
-
-```{python}
-# fig
-# df_cluster.to_file("barrios_cluster.shp")
-```
 
 # Conclusiones
 
