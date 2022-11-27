@@ -320,7 +320,7 @@ def validacion_mult_modelos(df_train:pd.DataFrame, df_test:pd.DataFrame,formulas
                 "MAE train":float,
                 "MAE test":float}
     result_modelos=result_modelos.astype(dict_types)
-    for formula in tq.tqdm(formulas):
+    for formula in formulas:
         fila=validacion_modelo(df_train, df_test,formula,alpha_,L1_wt_)
         result_modelos=pd.concat([result_modelos,fila],axis=0)
 
@@ -369,7 +369,7 @@ def pronostico_2021_2022(datos_modelo_atras_:pd.DataFrame, mejor_formula:str,pes
         else:
             error_aleatorio= np.random.normal(0,0,datos_pred_clase.shape[0])
         contar=0
-        for fecha_ in tq.tqdm(secuencia_prediccion):
+        for fecha_ in secuencia_prediccion:
             fecha_atras_=fecha_-un_dia
             filtro_fecha=datos_pred_clase["FECHA_ACCIDENTE"]==fecha_
             filtro_fecha_atras=datos_pred_clase["FECHA_ACCIDENTE"]==fecha_atras_
@@ -403,8 +403,10 @@ Con la lectura de datos se analiza el tipo de accidentes.
 
 ```{python}
 datos=pd.read_csv("incidentes_viales.csv",sep=",")#,encoding='ansi',engine="python")
-datos["CLASE_ACCIDENTE"].value_counts(dropna=False)
+tabla_1=datos["CLASE_ACCIDENTE"].value_counts(dropna=False)
 ```
+
+`r kbl(py$tabla_1, escape = F, align = "c", caption="Frecuencia de clase accidente.",row.names = T) %>%  kable_classic_2("striped", full_width = F)`
 
 <!-- #region tags=[] -->
 En la Table 1 se observa los tipos de accidente que hay, en este caso existen 6 registros NA y la Caída ocupante esta escrita de multiples formas, se elimina el NA y se unifica Caida ocupante.
@@ -426,8 +428,11 @@ diccionario_temp={"Solo da\xF1os":"Solo daños"}
 datos["GRAVEDAD_ACCIDENTE"]=datos["GRAVEDAD_ACCIDENTE"].replace(diccionario_temp)
 dicc_temp={'2019\\r':"2019"}
 datos["AÑO"]=datos["AÑO"].replace(dicc_temp)
-datos.isna().sum()
+tabla_2=datos.isna().sum()
 ```
+
+`r kbl(py$tabla_2, escape = F, align = "c", caption="Total NA por variable",row.names = T) %>%  kable_classic_2("striped", full_width = F)`
+
 
 <!-- #region tags=[] -->
 En la Table 2 se observa las columnas de data frame con la cantidad de NA que contiene, como uno de los propositos es la agrupación por barrios se debe analizar mas a fondo la columna BARRIO ya que cuenta con mas de 19006 registros NA, sin embargo la localización geografica no contiene NA por lo que puede servir para recuperar información de ese barrio ya que a la hora de digitar pueden suceder varios eventos como en el registro no se tiene claro el barrio en su momento.
@@ -444,11 +449,13 @@ Los datos cuentan con el registro de latitud y longitud por cada accidente, tamb
 <!-- #endregion -->
 
 ```{python tags=c()}
-shapefile = geopandas.read_file("Barrio_Vereda.shp") 
+shapefile = geopandas.read_file("Barrios_medellin/Barrio_Vereda.shp") 
 shapefile=shapefile[["NOMBRE", "SHAPEAREA", "SHAPELEN", "geometry"]]
-tabla_temp=pd.DataFrame({"Mapa":shapefile.NOMBRE.nunique(), "Datos":datos.BARRIO.nunique()}, index=["Cantidad de barrios"])
-tabla_temp
+tabla_3=pd.DataFrame({"Mapa":shapefile.NOMBRE.nunique(), "Datos":datos.BARRIO.nunique()}, index=["Cantidad de barrios"])
 ```
+
+`r kbl(py$tabla_3, escape = F, align = "c", caption="Barrios y veredas en Medellín",row.names = T) %>%  kable_classic_2("striped", full_width = F)`
+
 
 En la Table 3 se observa que los datos de MEData se tienen 490 barrios, mientras que en el shape cuenta con información de 320 barrios para este caso como se desea realizar un analisis geo espacial se trabaja con el shape.
 
@@ -478,11 +485,12 @@ gdf=gdf.to_crs("EPSG:4326")
 datos_join=geopandas.sjoin(gdf,shapefile , how='left') 
 filtro_mapa=(datos_join.SHAPEAREA.isna())
 datos_join.loc[filtro_mapa, "NOMBRE"]=datos_join.loc[filtro_mapa, "BARRIO"]
-datos_join.loc[filtro_mapa,"BARRIO"].value_counts(dropna=False)
 tabla_temp=pd.DataFrame(datos_join.loc[datos_join.SHAPEAREA.isna(),"BARRIO"].value_counts(dropna=False))#.sum()
-tabla_temp=pd.concat([tabla_temp,pd.DataFrame({"BARRIO":int(tabla_temp.sum())},index=["Total"])],axis=0)
-tabla_temp
+tabla_4=pd.concat([tabla_temp,pd.DataFrame({"BARRIO":int(tabla_temp.sum())},index=["Total"])],axis=0)
 ```
+
+`r kbl(py$tabla_4, escape = F, align = "c", caption="Barrios que no estan en el mapa de Medellín",row.names = T) %>%  kable_classic_2("striped", full_width = F)`
+
 
 En la Table 4 se tiene la frecuencia por barrios que no se encuentran en el mapa. Luego de hacer la intersección entre los barrios, aquellos que no se encuentran en el mapa tiene los siguientes nombres estos datos no se incluiran en los modelos por que según la geo localización no pertenecen a Medellín donde pueden pertenecer a municipios aledaños o de alguna manera no se digito bien la información.
 
@@ -494,9 +502,7 @@ datos_join=geopandas.sjoin(shapefile,gdf , how='inner')
 
 De los 270,759 accidentes que se encuentran registrados solo se considera que ocurrieron en la ciudad de Medellín 250,481.
 
-Antes de agrupar por año se inicia agrupando el comportamiento anual.
 
-### Preparación de  datos modelo agrupamiento
 
 
 
@@ -506,15 +512,21 @@ Antes de agrupar por año se inicia agrupando el comportamiento anual.
 
 ```{python}
 datos_join["FECHA_ACCIDENTE_"]=pd.to_datetime(datos_join["FECHA_ACCIDENTE"].apply(lambda x:x.split(" ")[0]+" 00:00:00")) # x.replace("Sin Inf","00:00:00") ))
-pd.DataFrame({"Fecha minima":[datos_join["FECHA_ACCIDENTE_"].min()],
+tabla_5 =pd.DataFrame({"Fecha minima":[datos_join["FECHA_ACCIDENTE_"].min()],
              "Fecha maxima":[datos_join["FECHA_ACCIDENTE_"].max()],
              "Días": [(datos_join["FECHA_ACCIDENTE_"].max()-datos_join["FECHA_ACCIDENTE_"].min()).days]})
 ```
 
+`r kbl(py$tabla_5, escape = F, align = "c", caption="Línea de tiempo de los accidentes",row.names = T) %>%  kable_classic_2("striped", full_width = F)`
+
+
+
+
 <!-- #region tags=[] -->
-En la Table 5 se observa que el periodo de tiempo que comprende los datos esta entre el 8 de Enero del 2014 al 8 de Diciembre del 2020, un total de 2526 días de información.
+En la Table 5 se observa que el periodo de tiempo que comprende los datos esta entre el 8 de Enero del 2014 al 8 de Diciembre del 2020, un total de 2526 días de información donde no se tiene información del año completo para 2014 y 2020.
 
 
+#### Definición de variable
 
 Para realizar un modelo predictivo de los accidentes a futuro se debe tener en cuenta que en el data frame cada fila representa un solo accidente y como el objetivo es predecir por tiempo la cantidad de accidentes, definimos:
 
@@ -557,8 +569,11 @@ datos_modelo["Y"]=datos_modelo["Y"].fillna(0)
 datos_modelo=datos_modelo.groupby(["CLASE_ACCIDENTE","FECHA_ACCIDENTE"]).sum().reset_index()
 datos_modelo=datos_modelo.sort_values(["CLASE_ACCIDENTE","FECHA_ACCIDENTE"])
 datos_modelo=caracteristicas_fecha(datos_modelo, "FECHA_ACCIDENTE")
-datos_modelo.head(5)
+tabla_6=datos_modelo.head(5)
 ```
+
+`r kbl(py$tabla_6, escape = F, align = "c", caption="Estructura inicial datos modelo predictivo",row.names = F) %>%  kable_classic_2("striped", full_width = F)`
+
 
 En la Table 6 se observa la estructura de los datos creados para el modelo, donde se tendrá en cuenta festivos, quincenas, día de la semana, mes y año.
 
@@ -566,7 +581,11 @@ En la Table 6 se observa la estructura de los datos creados para el modelo, dond
 
 * FESTIVO: 1 si el día $t$ representa un festivo en el calendario de Colombia.
 
-* QUINCENA: 1 si cumple que para el día $t$ del mes es 1, 14, 15, fin de mes o un día antes de fin de mes. Esto porque representan días de paga para los colombianos.
+* QUINCENA: 1 si cumple que para el día $t$ del mes es 14, 15, fin de mes o un día antes de fin de mes. Esto porque representan días de paga para los colombianos.
+
+* FIN_SEMANA: 1 si es sabado o domingo, 0 en el caso contrario.
+
+* QUINCENA_DESPUES: 1 si es un día después de quincena, días 1 y 16.
 
 * MES: El mes del día $t$.
 
@@ -588,10 +607,9 @@ fecha_accidente=datos_modelo[datos_modelo["Y"]>0].groupby(by="YEAR").aggregate({
                                                                          "QUINCENA":["sum"]})
 fecha_accidente.columns=["Días por año","Festivos","Quincenas" ]
 fecha_accidente[["Festivos","Quincenas"]]=(fecha_accidente[["Festivos","Quincenas"]]/5).round()
-fecha_accidente
 ```
 
-Tabla 7
+`r kbl(py$fecha_accidente, escape = F, align = "c", caption="Días por año con registro de accidentes",row.names = T) %>%  kable_classic_2("striped", full_width = F)`
 
 En la Figura 1 se observa la cantidad de accidentes por dia desde del año 2014 hasta el 2020, esto para cada tipo de accidente (gráfico iteractivo). Se observa:
 
@@ -642,13 +660,6 @@ fig.update_traces(quartilemethod="linear") # or "inclusive", or "linear" by defa
 fig.show()
 ```
 
-```{python}
-fig = px.box(datos_modelo[filtro_grafico],
-             x="CLASE_ACCIDENTE", y="Y", color="QUINCENA_DESPUES",
-            facet_row="YEAR",width=900, height=600,labels=dict_plots)
-fig.update_traces(quartilemethod="linear") # or "inclusive", or "linear" by default
-fig.show()
-```
 
 <figcaption> Figura 4: Box plots de cantidad de accidente según si es quincena dado el año (2014 y 2020) y la clase de accidente.</figcaption>
 
@@ -708,6 +719,8 @@ fig.update_traces(quartilemethod="exclusive") # or "inclusive", or "linear" by d
 fig.show()
 ```
 
+<figcaption> Figura 7: Box plot Número de accidentes por día de festivo dado la clase de accidente. </figcaption>
+
 ```{python}
 fig = px.box(datos_modelo,
              x="CLASE_ACCIDENTE", y="Y", color="QUINCENA_DESPUES",labels=dict_plots)
@@ -715,12 +728,13 @@ fig.update_traces(quartilemethod="exclusive") # or "inclusive", or "linear" by d
 fig.show()
 ```
 
-<figcaption> Figura 8: </figcaption>
+<figcaption> Figura 8: Box plot Número de accidentes por día después de quincena dado la clase de accidente. </figcaption>
 
 
-<figcaption> Figura 8: Box plot Número de accidentes por si es festivo o no dado la clase de accidente. </figcaption>
 
-En la Figura 8 se observa que para el tipo de accidente por choque puede ser influyente si hay festivo o no, para los otros tipos no parece significativo pero en general existe una tendencia a ocurrir menos accidentes en los días festivos.
+En la Figura 7 se observa que para el tipo de accidente por choque puede ser influyente si hay festivo o no, para los otros tipos no parece significativo pero en general existe una tendencia a ocurrir menos accidentes en los días festivos.
+
+En la Figura 8 el día después de quincena para choque para ser relevante para el número de accidentes.
 
 
 
@@ -773,8 +787,11 @@ filtro_variables=lambda x: (len(x.split("+"))>4) & (len(x.split("+"))<10)
 formulas_=list(formulas_[formulas_.apply(filtro_variables  )])
 tabla_variables=np.array(variables_)
 tabla_variables.shape=(4,3)
-pd.DataFrame(tabla_variables)
+tabla_8=pd.DataFrame(tabla_variables)
 ```
+
+`r kbl(py$tabla_8, escape = F, align = "c", caption="Variables a considerar",row.names = F) %>%  kable_classic_2("striped", full_width = F)`
+
 
 En la Table 8 se observan las variables que se van a considerar para predecir $Y_{(t,a)}$, 
 
@@ -798,8 +815,13 @@ $$\text{VARMAE}=\left(\frac{\text{MAE}_{\text{train}}-\text{MAE}_{\text{test}} }
 # resultados["Variación validación (MAE)"]=100*abs(resultados["MAE train"]-resultados["MAE test"])/resultados["MAE train"]
 # resultados.to_csv("validacion_modelos.csv", index=False)
 resultados=pd.read_csv("validacion_modelos.csv")
-resultados.describe().iloc[1:,]
+tabla_9=resultados.describe().iloc[1:,]
 ```
+
+
+`r kbl(py$tabla_9, escape = F, align = "c", caption="Resumen de validación",row.names = T) %>%  kable_classic_2("striped", full_width = F)`
+
+
 
 En la Tabla 9: 3223 De los modelos se encontro que el \% de variación no supero el 15\%, es decir, no existe sobre ajuste y se encontro que el 75\% cuenta con un error promedio menor a 6.5 accidentes por día sin importar el tipo de accidente.
 
@@ -863,8 +885,11 @@ fig.show()
 En la Figura 11 se observa que este modelo asigna una media para el choque y al final converge a una media sin mostrar ningún tipo de variación, esto fue observado en los modelos que se probo donde al final por tratar de pronosticar periodos de mas de 2 años los modelos no logran captar el error donde se llega a una media estandar lo cual en terminos practicos no tiene sentido. No se consiguio otro modelo que fuera mejor y considere las fechas estacionales, este modelo no funciona para predecir a largo plazo, los modelos considerando las fechas especiales sin el número de accidentes hacia atras solo consigen una linea horizontal y recta ocasionando un error en el pronóstico.
 
 ```{python}
-datos_predict_2022.groupby("CLASE_ACCIDENTE")["Y"].mean()
+tabla_10=datos_predict_2022.groupby("CLASE_ACCIDENTE")["Y"].mean()
 ```
+
+
+`r kbl(py$tabla_10, escape = F, align = "c", caption="Medía predicción por clase",row.names = T) %>%  kable_classic_2("striped", full_width = F)`
 
 Tabla 10: Esta es la media que se obtiene 
 
@@ -878,22 +903,17 @@ fig = px.line(datos_predict_2022, x="FECHA_ACCIDENTE", y="Y", color="CLASE_ACCID
 fig.show()
 ```
 
+<figcaption> Figura 12: </figcaption>
+
 Figura 12: En este caso sigue existiendo una convergencia en la media del pronóstico y nos da la misma información de la Figrua anterior pero al usuario es mas conveniente mostrar este tipo de gráficos.
 
 ```{python}
-smf.ols(formula_final,datos_modelo_atras_numerico ).fit().scale**0.5
+tabla_11= datos_predict_2022.groupby("CLASE_ACCIDENTE")["Y"].mean()
 ```
 
-```{python}
-datos_predict_2022.groupby("CLASE_ACCIDENTE")["Y"].mean()
-```
+`r kbl(py$tabla_11, escape = F, align = "c", caption="Media predicción por clase con error de variación",row.names = F) %>%  kable_classic_2("striped", full_width = F)`
 
 Tabla 11
-
-```{python}
-# pronostico_final=pd.concat([datos_modelo_atras_numerico,datos_predict_2022],axis=0)
-# pronostico_final[["FECHA_ACCIDENTE","Y","CLASE_ACCIDENTE"]].to_csv("datos_pronostico_2021_2022.csv",index=False)
-```
 
 ### Preparación de  datos modelo de agrupamiento
 
@@ -911,8 +931,8 @@ datos_temp=(datos_join[filtro_year]).copy()
 datos_temp=(datos_join[filtro_year]).copy()
 df_cluster_one=datos_temp.groupby(["AÑO","NOMBRE","SHAPEAREA"  ])["CBML"].count().reset_index().copy()
 df_cluster_one=df_cluster_one.pivot(index=["NOMBRE","SHAPEAREA"],columns="AÑO",values="CBML").fillna(0)
-var_accidentes=["ACCIDENTES_1000KM2_"+ year for year in year_cluster ]
-var_muertes=["MUERTES_" +  year for year in year_cluster]
+var_accidentes=["ACCIDENTES KM2 "+ year for year in year_cluster ]
+var_muertes=["MUERTES " +  year for year in year_cluster]
 df_cluster_one.columns=var_accidentes
 datos_temp=datos_temp[datos_temp["GRAVEDAD_ACCIDENTE"]=="Con muertos"]
 df_cluster_2=datos_temp.groupby(["AÑO","NOMBRE","SHAPEAREA"  ])["CBML"].count().reset_index().copy()
@@ -920,14 +940,13 @@ df_cluster_2=df_cluster_2.pivot(index=["NOMBRE","SHAPEAREA"],columns="AÑO",valu
 df_cluster_2.columns=var_muertes
 df_cluster=pd.concat([df_cluster_one,df_cluster_2],axis=1).fillna(0)
 areas_=np.array(df_cluster.reset_index()["SHAPEAREA"])
-
 for var in var_accidentes:
-    df_cluster[var]=(df_cluster[var]/areas_)*1000
+    df_cluster[var]=(df_cluster[var]/areas_)*10**6
 df_estandar=estandarizacion(df_cluster,list(df_cluster))
 dic_plot_cluster={}
 for i in year_cluster:
-    dic_plot_cluster.update({"ACCIDENTES_1000KM2_"+i: "Accidentes por 1000 Km2 "+i})
-    dic_plot_cluster.update({"MUERTES_"+i: "Muertes en "+i})
+    dic_plot_cluster.update({"ACCIDENTES KM2 "+i: "Accidentes por 1000 Km2 "+i})
+    dic_plot_cluster.update({"MUERTES "+i: "Muertes en "+i})
     
 ```
 
@@ -946,23 +965,23 @@ px.line(y= distortions,x=range(2, 11),labels={"y":"Score","x":"Num cluster" })
 
 <figcaption> Figura 13: Score de insercia por k-means </figcaption>
 
-En la Figura 13 se observa 
+En la Figura 13 se observa que a partir de 5 grupos el decaimiento del score no es tan alto y no es necesario dividir tanto la cantidad de barrios, luego de probar con varios grupos se llego a los siguientes grupos.
 
 
 ```{python}
 df_cluster["CLUSTER"]=kmeans(df_estandar,list(df_estandar), 4,1)
-df_cluster["CLUSTER"]=df_cluster["CLUSTER"].replace({0:"Grado menor",
-                                                    1:"Grado alto",
-                                                    2:"Grado moderado",
-                                                    3:"Grado alarma"})
+df_cluster["CLUSTER"]=df_cluster["CLUSTER"].replace({1:"Grado menor",
+                                                    3:"Grado alto",
+                                                    0:"Grado moderado",
+                                                    2:"Grado alarma"})
 ```
 
 ```{python}
-fig = px.box(df_cluster, y=var_accidentes,color="CLUSTER",labels=dic_plot_cluster)
+fig = px.box(df_cluster, y=var_accidentes,color="CLUSTER",labels={"value":"Accidentes por cada km cuadrado"})
 fig.show()
 ```
 
-Figura 14
+<figcaption> Figura 14: Total de accidentes por kilometro cuadrado según el año y el cluster </figcaption>
 
 Viendo la distribucion en el boxplot del numero de accidentes por 1.000 km2, podemos concluir que, los diferentes clusters se diferencian por numero de accidentes. Siendo el cluster "alarma" el que presenta la mayor cantidad de accidentes por 1.000 km2. 
 
@@ -975,7 +994,7 @@ fig.show()
 ```
 
 <!-- #region -->
-<figcaption> Figura 15 </figcaption> 
+<figcaption> Figura 15:  </figcaption> 
 
 Viendo la distribucion podemos ver que ocurre una diferenciacion similar a la metrica anterior, pero en este caso, podemos ver que los clusters de "alto" y "moderado" tienen un tipo de corte. 
 
@@ -989,9 +1008,9 @@ En conclusion, podemos ver que los clusters si agrupan los barrios dependiendo d
 
 # Conclusiones
 
-La predicción con los criterios exigidos no se logro con exito ya que los modelos que se probaron convergen.
+La predicción con los criterios exigidos no se logro con exito ya que los modelos que se probaron convergen a una sola media, no fue posible recomendar una posible solución con el modelo predictivo.
 
-
+Se encontro que si hay diferencia entre barrios donde existen algunos preocupantes y que se deben tener en cuenta para buscar que esta causando dichos accidentes.
 
 
 # Referencias

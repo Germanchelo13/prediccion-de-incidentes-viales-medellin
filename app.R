@@ -1,7 +1,4 @@
 library(sf) # manupulación geolocalizaciones
-# library(mapview)
-# # library(tmap)  # graficos interactivos de mapas
-# library(leaflet)
 library(dplyr) # manejo de funciones
 library(ggrepel)
 library(shiny) # aplicacion
@@ -13,38 +10,24 @@ library(rjson)
 library(shinycssloaders)# to add a loader while graph is populating
 
 url_github<-"https://github.com/Germanchelo13/prediccion-de-incidentes-viales-medellin.git"
-# url <- 'https://raw.githubusercontent.com/plotly/datasets/master/election.geojson'
-# geojson <- rjson::fromJSON(file=url)
-mapa_medellin<-st_read('barrios_cluster.shp')
+mapa_medellin<-st_read('barrios_cluster/barrios_cluster.shp')
 prediccion<-read.csv("datos_pronostico_2021_2022.csv")
 prediccion$FECHA_ACCIDENTE_ <-(as.POSIXct(prediccion$FECHA_ACCIDENTE, format="%Y-%m-%d", tz="UTC")) 
-var_clusters<-c("CLUSTER",'ACCIDENTES_100KM2_2015', 'ACCIDENTES_100KM2_2016',
-                'ACCIDENTES_100KM2_2017', 'ACCIDENTES_100KM2_2018',
-                'ACCIDENTES_100KM2_2019', 'MUERTES_2015', 'MUERTES_2016',
-                'MUERTES_2017', 'MUERTES_2018', 'MUERTES_2019')
+var_clusters<-c( 'ACCIDENTES por KM cuadrado 2015', 'ACCIDENTES por KM cuadrado 2016',
+                 'ACCIDENTES por KM cuadrado 2017', 'ACCIDENTES por KM cuadrado 2018',
+                 'ACCIDENTES por KM cuadrado 2019', 'MUERTES 2015', 'MUERTES 2016',
+                 'MUERTES 2017', 'MUERTES 2018', 'MUERTES 2019')
 
 names(mapa_medellin)<-c('BARRIO', 'SHAPEAREA', 'SHAPELEN', 
-                        'ACCIDENTES_100KM2_2015', 'ACCIDENTES_100KM2_2016',
-                        'ACCIDENTES_100KM2_2017', 'ACCIDENTES_100KM2_2018',
-                        'ACCIDENTES_100KM2_2019', 'MUERTES_2015', 'MUERTES_2016',
-                        'MUERTES_2017', 'MUERTES_2018', 'MUERTES_2019', 'CLUSTER','geometry'
+                        'ACCIDENTES por KM cuadrado 2015', 'ACCIDENTES por KM cuadrado 2016',
+                        'ACCIDENTES por KM cuadrado 2017', 'ACCIDENTES por KM cuadrado 2018',
+                        'ACCIDENTES por KM cuadrado 2019', 'MUERTES 2015', 'MUERTES 2016',
+                        'MUERTES 2017', 'MUERTES 2018', 'MUERTES 2019', 'CLUSTER','geometry'
                         )
 for (var_ in var_clusters[-1]){
-  indice<-which(is.element(names(mapa_medellin), var_ ))
-  mapa_medellin[[var_]]<-round(mapa_medellin[[var_]], 3)
+  mapa_medellin[[var_]]<-round(mapa_medellin[[var_]])
 } 
-# mapa_medellin[['SHAPELEN']]
-# mapa_medellin$descripcion<-paste(
-#   "Barrio: ", mapa_medellin$BARRIO,
-#   "<br>  Accidentes por 1000 km2  promedio",
-#   "<br> : ",round((mapa_medellin$ACCIDENTES_1000KM2_2015+
-#                mapa_medellin$ACCIDENTES_1000KM2_2016+
-#                mapa_medellin$ACCIDENTES_1000KM2_2017+
-#                mapa_medellin$ACCIDENTES_1000KM2_2018+
-#                mapa_medellin$ACCIDENTES_1000KM2_2019)/5,1),
-#   sep=""
-#   
-#   )
+
 
 usuario<- fluidPage(
   dashboardPage(
@@ -61,7 +44,7 @@ usuario<- fluidPage(
       sidebarMenu(id="sidebar",
                   fluidRow(style='height:5vh'),
                   menuItem("Problematica", tabName="intro", icon=icon("users")),
-                  menuItem(text= "Accidentes 2021 2022",tabName = "series",icon = icon("chart-line")),
+                  menuItem(text= "Accidentes 2015 2022",tabName = "series",icon = icon("chart-line")),
                   menuItem(text= "Accidentes Barrios",tabName = "map",icon = icon("earth-americas"))
       )  ),
     # itmes
@@ -80,21 +63,23 @@ usuario<- fluidPage(
                                                             selected =unique(mapa_medellin$CLUSTER)[1] )),
                                          column(6, selectInput(inputId ="estado" ,label= "Seleccione una Variable",
                                                                choices =var_clusters,multiple = F) ) )
-                                ,fluidRow( plotlyOutput("map_plot") )
+                                ,fluidRow( uiOutput("text_geo2") ), 
+                                fluidRow( plotlyOutput("map_plot") )
                                ))
                      
               )),
       tabItem(tabName = 'series',
               tabBox(id='t3',width= 12,tabPanel(
                 HTML('<i class="fa-duotone fa-chart-scatter"></i>Numeric'),icon=icon('chart-line'),
-                fluidPage( fluidRow(column( 6,
-                                     daterangepicker("rangos_fecha",
+                fluidPage( fluidRow(uiOutput("intro_series") ),
+                  fluidRow(column( 6,
+                                   daterangepicker("rangos_fecha",
                                                      "Seleccione entre que fechas quiere los accidentes",
                                        style = paste0(
                                          "background-color: chartreuse; ",
                                          "box-shadow: 0 30px 40px 0 rgba(16, 36, 94, 0.2);"
                                        ),
-                                       start=min(prediccion$FECHA_ACCIDENTE_),
+                                       start="2021-01-01 UTC",
                                        end = max(prediccion$FECHA_ACCIDENTE_),
                                        min = min(prediccion$FECHA_ACCIDENTE_),
                                        max= max(prediccion$FECHA_ACCIDENTE_)
@@ -114,9 +99,17 @@ usuario<- fluidPage(
   )
 )
 servidor<-function(input, output) {
+  output$intro_series<-renderUI({
+    HTML("El número de accidentes en el tiempo, el 2014 a 2020 son 
+         los valores reales, a partir del 2021 a 2022 se tiene el pronóstico.")
+    
+  })
   output$text_geo<-renderUI({
-  "Se cuenta con 320 barrios en la ciudad de Medellín,
-    selecciona variables y cluster que te interesen." })
+  HTML("Este mapa considera 320 barrios y veredas en la ciudad de Medellín,
+    seleccione el grupo de barrios y la accidentalidad según el año.") })
+  output$text_geo2<- renderUI({
+ HTML(paste("<center> <b>", input$estado,"</b> </center><br> Busca los barrios de interés</br> "  ))
+  })
   output$intro_<-renderUI({
     HTML("
     <br><h2>Accidentes viales en Medellín</h6>
@@ -125,7 +118,7 @@ servidor<-function(input, output) {
   En esta aplicación puede interactuar con la información desde el año 2015 y 2022, 
   también puedes analizar la información por barrio.
   
-  <iframe width='560' height='315' src='https://www.youtube.com/embed/hLyG5h6LuCE' 
+  <iframe width='560' height='315' src='https://www.youtube.com/embed/lH5U8K_BASs' 
 title='YouTube video player' frameborder='0' allow='accelerometer; autoplay; 
 clipboard-write; encrypted-media; gyroscope; picture-in-picture'
 allowfullscreen></iframe>
@@ -151,19 +144,23 @@ allowfullscreen></iframe>
     # reactive(input$cluster)
     filtro_<- is.null(input$cluster) | is.element(mapa_medellin$CLUSTER,input$cluster)
     # print(sum(filtro_))
-    # columnas_<-which( is.element(names(mapa_medellin), 
-    #                              c("BARRIO","descripcion","CLUSTER",input$estado )))
+    columnas_<-which( is.element(names(mapa_medellin),
+                                 c("BARRIO","descripcion","CLUSTER",input$estado )))
     # 
     mapa_medellin_temp=mapa_medellin[filtro_,]
-    title_<-paste(input$estado)
     
     fig<- ggplot(mapa_medellin_temp,aes(tooltip=BARRIO))+
       # geom_text_repel(aes(label=descripcion), size=5)+
-      geom_sf(aes(fill=get(input$estado ) ))
+      geom_sf(aes(fill=get(input$estado ) ))+
+      labs(fill=" " )+
+      xlim(-75.71739,-75.48462 )+
+      ylim(6.162904,6.374872)
+    
     plotly::ggplotly( fig )
 
 }
    )
+
 
   # mapa university 
 #  output$map_plot <- renderTmap({
