@@ -1,0 +1,1014 @@
+---
+title: "informe incidentes viales en Medellín"
+author: "Germán Patiño, \n David Andres Cano Gonzalez, \n David Garcia Blandon \n ,Juan Pablo Buitrago Diaz"
+date: "2022-10-10"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: hide
+    theme: paper
+
+    fig_width: 8
+    fig_height: 8
+    fig_caption: true
+---
+
+```{css echo=FALSE, language="css"}
+h1  {
+  text-align: center;
+  color: navy;
+  text-decoration: underline #BE05FA;
+}
+h2 {
+  text-align: center;
+  color: blue;
+  text-decoration: underline #BE05FA;
+}
+h3 {
+  text-align: center;
+  color: blue;
+  text-decoration: underline #BE05FA;
+}
+body {
+  color: black;
+  counter-reset:section;
+}
+figcaption {
+  text-align: center;
+  color: black;
+  font-size: 20px;
+}
+caption::before {
+    counter-increment: section;
+    content:"Table - " counter(section);
+}
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reticulate)
+library(kableExtra)
+```
+
+
+```{python}
+import pandas as pd
+import numpy as np
+import geopandas
+import ast
+# import datetime
+import plotly.graph_objects as go
+import plotly.express as px
+import statsmodels.formula.api as smf
+import statsmodels.api as sm
+# import plotly.figure_factory as ff
+import tqdm as tq
+from itertools import chain, combinations
+from pandas.tseries.holiday import *
+from pandas.tseries.offsets import CustomBusinessDay
+# #! pip install geopandas
+import sklearn.cluster
+import warnings
+warnings.filterwarnings('ignore')
+
+
+```
+
+```{python}
+def strict_next_monday(dt: datetime) -> datetime:
+    """
+    Si el festivo cae en un día diferente a lunes, se corre al próximo lunes
+    """
+    if dt.weekday() > 0:
+        return dt + timedelta(7-dt.weekday())
+    
+    return dt
+class ColombianBusinessCalendar(AbstractHolidayCalendar):
+    rules = [
+        # festivos fijos
+        Holiday('Año nuevo', month=1, day=1),
+        Holiday('Día del trabajo', month=5, day=1),
+        Holiday('Día de la independencia', month=7, day=20),
+        Holiday('Batalla de Boyacá', month=8, day=7),
+        Holiday('Inmaculada Concepción', month=12, day=8),
+        Holiday('Navidad', month=12, day=25),
+        # festivos relativos a la pascua
+        Holiday('Jueves santo', month=1, day=1, offset=[Easter(), Day(-3)]),
+        Holiday('Viernes santo', month=1, day=1, offset=[Easter(), Day(-2)]),
+        Holiday('Ascención de Jesús', month=1, day=1, offset=[Easter(), Day(43)]),
+        Holiday('Corpus Christi', month=1, day=1, offset=[Easter(), Day(64)]),
+        Holiday('Sagrado Corazón de Jesús', month=1, day=1, offset=[Easter(), Day(71)]),
+        # festivos desplazables (Emiliani)
+        Holiday('Epifanía del señor', month=1, day=6, observance=strict_next_monday),
+        Holiday('Día de San José', month=3, day=19, observance=strict_next_monday),
+        Holiday('San Pedro y San Pablo', month=6, day=29, observance=strict_next_monday),
+        Holiday('Asunción de la Virgen', month=8, day=15, observance=strict_next_monday),
+        Holiday('Día de la raza', month=10, day=12, observance=strict_next_monday),
+        Holiday('Todos los santos', month=11, day=1, observance=strict_next_monday),
+        Holiday('Independencia de Cartagena', month=11, day=11, observance=strict_next_monday)
+    ]
+    
+Colombian_BD = CustomBusinessDay(calendar=ColombianBusinessCalendar())
+calendar = ColombianBusinessCalendar()
+# festivos para la franja horaria
+festivos = pd.to_datetime(calendar.holidays(start='2014-01-01', end='2022-12-31'))
+# dias de la semana en pandas
+replace_dia_semana={0:"Lunes",
+                   1:"Martes",
+                   2:"Miercoles",
+                   3:"Jueves",
+                   4:"Viernes",
+                   5:"Sabado",
+                   6:"Domingo"}
+# diccionario mes
+replace_mes={1:"Enero",
+            2:"Febrero",
+            3:"Marzo",
+            4:"Abril",
+            5:"Mayo",
+            6:"Junio",
+            7:"Julio",
+            8:"Agosto",
+            9:"Septiembre",
+            10:"Octubre",
+            11:"Noviembre",
+            12:"Diciembre"}
+# diccionario plots 
+dict_plots={"CLASE_ACCIDENTE":"Clase de accidente",
+            "Y":"Número de accidentes en Medellín",
+            "FECHA_ACCIDENTE":"Fecha del accidente",
+           "DIA_SEMANA":"Día de la semana",
+           "FESTIVO":"Día festivo",
+           "QUINCENA":"Día de quincena",
+           "MES":"Mes",
+           "YEAR":"Año",
+           "QUINCENA_DESPUES":"Un día después de quincena",
+           "DIA_MES":"Día del mes",
+           "residuales":"Residuales mejor modelo",
+           "Y_predict":"Predicción Y"}
+# columnas fechas
+columnas_fecha=["FECHA_ACCIDENTE",
+                "MES",
+                "YEAR", 
+                "FESTIVO",
+                "FIN_SEMANA",
+                "DIA_MES", 
+                "DIA_SEMANA",
+                "QUINCENA",
+                "QUINCENA_DESPUES"]
+# fecha maxima para 2022
+fecha_maxima_2022=pd.to_datetime("2022-12-31 00:00:00")
+```
+
+```{python tags=c()}
+def kmeans(datos_:pd.DataFrame,variables_:list ,n_:int,semilla:int  )->list:
+    """
+    Aplica el algoritmo
+    datos: pd.DataFrame.
+    variables: list Lista de variables que se incluyen kmeans (deben ser numericas).
+    n_: int número de cluster.
+    semilla: int semilla de aleatoriedad. 
+    return: list de los segmentos, numerico.
+    """
+    X=datos_[variables_].copy()
+    cluster_kmeans= sklearn.cluster.KMeans( n_clusters=n_, random_state=semilla).fit(X)
+    segmentos_=cluster_kmeans.labels_
+
+    return segmentos_
+
+def estandarizacion(datos_:pd.DataFrame,variables_numeric:list  )->pd.DataFrame:
+    """
+    Estandariza las variables de un dataframe para que esten entre 0 y 1
+    datos: pd.DataFrame.
+    variables_numeric: Lista de variables que se quieren estandarizar 
+    """
+    datos_new=datos_.copy()
+    valores_min=datos_new[variables_numeric].min(axis=0)
+    valores_max=datos_new[variables_numeric].max(axis=0)
+    datos_new[variables_numeric]=(datos_new[variables_numeric]- valores_min)/(valores_max-valores_min )
+
+    return datos_new
+
+def quincena(df_:pd.DataFrame,fecha_:str):
+    """
+    Dice si un día es quincena o no.
+    df_: pd.DataFrame.
+    fecha_: str nombre de la columna con las fechas
+    return: df_ con nuevas columnas.
+    """
+    fin_mes=(df_[fecha_]+pd.Timedelta(1,"d")).dt.day
+    quince_fin_atras=(df_[fecha_]+pd.Timedelta(2,"d")).dt.day
+    dia_=df_[fecha_].dt.day
+    filtro_quincena=((fin_mes==1)|
+                    (quince_fin_atras==1) |
+                    (dia_.isin([14,15])))
+    df_["DIA_MES"]=dia_.astype(str)
+    df_["QUINCENA"]=np.where(filtro_quincena,1,0)
+    filtro_noquincena=(dia_.isin([16,1]))  
+    df_["QUINCENA_DESPUES"]=np.where(filtro_noquincena,1,0)
+    
+    return df_
+def caracteristicas_fecha(df_:pd.DataFrame,fecha_:str )->pd.DataFrame:
+    """
+    Extrae de una fecha el día de la semana, los festivos, quincenas, mes, etc.
+    df_: pd.DataFrame con una columna de fecha.
+    fecha_: str del nombre de la columna en df_
+    return: df_ con las nuevas columnas a partir de la fecha.
+    """
+    df_["DIA_SEMANA"]=df_[fecha_].dt.weekday
+    df_["FIN_SEMANA"]=np.where(df_["DIA_SEMANA"].isin([5,6]), 1,0)
+    df_["DIA_SEMANA"]=df_["DIA_SEMANA"].replace(replace_dia_semana)
+    df_["FESTIVO"]=np.where(df_[fecha_].isin(festivos), 1,0 )
+    df_=quincena(df_,fecha_)
+    df_["MES"]=df_[fecha_].dt.month
+    df_["MES"]=df_["MES"].replace(replace_mes)
+    df_["YEAR"]=df_[fecha_].dt.year
+    
+    return df_
+
+def historia_atras(df_:pd.DataFrame, response:str, groupby:str,periodos:int)->pd.DataFrame:
+    """
+    
+    """
+    list_periodos=pd.Series(range(1,periodos+1))
+    max_periodo=list_periodos.max()
+    new_columns=list(response+pd.Series(range(1,periodos+1)).astype(str))
+    list_columns=[*new_columns,*list(df_.columns)]
+    
+    df_new=pd.DataFrame(columns=list_columns)
+    new_dict={}
+    for i  in  new_columns:
+        new_dict.update({i:int })
+    df_new=df_new.astype(new_dict)
+    df_new=df_new.astype(df_.dtypes)
+    clases=list(df_[groupby].unique())
+    for clase in clases:
+        filtro_=df_[groupby]==clase
+        df_temp=df_[filtro_].copy()
+        n_temp=df_temp.shape[0]
+        for periodo in list(list_periodos):
+            df_temp[new_columns[periodo-1]]=0
+            temp_=[*([0]*periodo), *list(df_temp[response].iloc[:-periodo].copy())]
+            df_temp[new_columns[periodo-1]]=temp_#.copy()
+            df_temp=df_temp.reset_index().drop(labels="index",axis=1)
+        df_new=pd.concat([df_new.iloc[periodo:],df_temp.copy()],axis=0).copy()
+    df_new=df_new.reset_index().drop(labels="index",axis=1)
+    return df_new
+
+def powerset(variables:list, response:str):
+    """
+    Genera la combinacion de formulas posibles de las variables hacia la variable respuesta
+    para un modelo lm
+    powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)
+    variables: list de str.
+    response: la variable respuesta en funcion de variables.
+    return: list de formulas posibles con las variables.
+    """
+    # s = list([*["Y"+str(i) for i in range(1,k)],*["CLASE_ACCIDENTE","DIA_SEMANA","Y14","FESTIVO","QUINCENA" ]])
+    comb_=list(chain.from_iterable(combinations(variables, r) for r in range(len(variables)+1)))
+    formulas=[response+"~"+"+".join(list(comb_[i])) for i in range(1,len(comb_))]
+    return formulas
+
+def ajuste_modelos(df_:pd.DataFrame, formula_:str,alpha_=0.1,L1_wt_=0.5):
+    """
+    Ajusta 1 de 3 tipos de modelo, poison, lineal y log de lineal.
+    df_: pd.DataFrame
+    formula_: str formula con columnas asociadas al df_
+    return: el modelo ajustado a los datos
+    """
+    modelo_=smf.ols(formula=formula_, data=df_).fit_regularized(method='elastic_net', alpha=alpha_, L1_wt=L1_wt_)
+
+    return modelo_
+
+def mae(y_obs:pd.Series,y_pred:pd.Series)->float:
+    """
+    Calcula los resuldiales y el mae.
+    y_obs: pd.Series de la variable observada.
+    y_pred: pd.Series de la variable predicha
+    return: float mae.
+    """
+    residuales=abs(y_obs-y_pred)
+    mae=residuales.mean()
+    
+    return mae
+
+def validacion_modelo(df_train:pd.DataFrame, df_test:pd.DataFrame,formula_:str,alpha_=0.1,L1_wt_=0.5):
+    """
+    """
+    response=formula_.split("~")[0]
+    modelo_=ajuste_modelos(df_train,formula_)
+    y_pred_train=modelo_.predict(df_train)        
+    y_pred_test=modelo_.predict(df_test)
+    y_obs_train=df_train[response].copy()
+    y_obs_test=df_test[response].copy()
+    mae_train=mae(np.array(y_obs_train), np.array(y_pred_train))
+    mae_test=mae(np.array(y_obs_test),np.array(y_pred_test))
+    result_data=pd.DataFrame({"Formula modelo":[formula_],
+                             "MAE train":[mae_train],
+                             "MAE test":[mae_test]})
+    return result_data
+
+def validacion_mult_modelos(df_train:pd.DataFrame, df_test:pd.DataFrame,formulas:list,alpha_=0.1,L1_wt_=0.5):
+    """
+    """
+    columns_result=["Formula modelo","MAE train","MAE test"]
+    result_modelos=pd.DataFrame(columns=columns_result)
+    dict_types={"Formula modelo":str,
+                "MAE train":float,
+                "MAE test":float}
+    result_modelos=result_modelos.astype(dict_types)
+    for formula in tq.tqdm(formulas):
+        fila=validacion_modelo(df_train, df_test,formula,alpha_,L1_wt_)
+        result_modelos=pd.concat([result_modelos,fila],axis=0)
+
+    return result_modelos
+
+
+def pronostico_2021_2022(datos_modelo_atras_:pd.DataFrame, mejor_formula:str,peso_=False):
+    """
+    pronostica el 2021 y 2022 de los accidentes.
+    """
+    
+    un_dia=pd.Timedelta(1,"d")
+    # df_temp=datos_modelo_atras_.copy()
+    # df_temp["Y"]=np.log(df_temp["Y"])
+    modelo_mejor=ajuste_modelos(datos_modelo_atras_, mejor_formula)
+    modelo_temp=smf.ols(formula=mejor_formula, data=datos_modelo_atras_).fit()
+    sigma_=modelo_temp.scale**0.5
+    var_y_atras=variables_y[:-1]
+    var_y_actual=variables_y[1:]
+    fecha_maxima=datos_modelo_atras_["FECHA_ACCIDENTE"].max()
+    filtro_fecha_maxima=datos_modelo_atras_["FECHA_ACCIDENTE"]==fecha_maxima
+    secuencia_fechas_predict=pd.DataFrame({"FECHA_ACCIDENTE":pd.date_range(start=fecha_maxima,
+                                          end=fecha_maxima_2022)})
+    secuencia_fechas_predict=caracteristicas_fecha(secuencia_fechas_predict, "FECHA_ACCIDENTE")
+    columnas_modelo=pd.Series(list(datos_modelo_atras_))
+    columnas_modelo=list(columnas_modelo[~columnas_modelo.isin(columnas_fecha )])
+    pesos=datos_modelo_atras_.groupby("CLASE_ACCIDENTE").mean()["Y"]
+    pesos=(pesos/pesos.sum())*sigma_
+    pesos=pesos.to_dict()
+
+    df_2021_2022=pd.DataFrame(columns=datos_modelo_atras_.columns)
+    df_2021_2022=df_2021_2022.astype(datos_modelo_atras_.dtypes)
+    for clase_ in datos_modelo_atras_["CLASE_ACCIDENTE"].unique():
+        filtro_clase=datos_modelo_atras_["CLASE_ACCIDENTE"]==clase_
+        datos_temp=datos_modelo_atras_.loc[filtro_clase & filtro_fecha_maxima,variables_y].copy()
+        datos_temp=list(datos_temp.iloc[0])
+        datos_pred_clase=secuencia_fechas_predict.copy()
+        datos_pred_clase[columnas_modelo]=0
+        datos_pred_clase["CLASE_ACCIDENTE"]=clase_
+        filtro_fecha_minima=datos_pred_clase["FECHA_ACCIDENTE"]==fecha_maxima
+        datos_pred_clase.loc[filtro_fecha_minima,variables_y]=(datos_temp)
+        secuencia_prediccion=secuencia_fechas_predict["FECHA_ACCIDENTE"].iloc[1:]
+        np.random.seed(1035879257)
+        if peso_:
+            error_aleatorio= np.random.normal(0,pesos[clase_],datos_pred_clase.shape[0])
+        else:
+            error_aleatorio= np.random.normal(0,0,datos_pred_clase.shape[0])
+        contar=0
+        for fecha_ in tq.tqdm(secuencia_prediccion):
+            fecha_atras_=fecha_-un_dia
+            filtro_fecha=datos_pred_clase["FECHA_ACCIDENTE"]==fecha_
+            filtro_fecha_atras=datos_pred_clase["FECHA_ACCIDENTE"]==fecha_atras_
+            datos_pred_clase.loc[filtro_fecha,var_y_actual]=list(
+                datos_pred_clase.loc[filtro_fecha_atras,var_y_atras].iloc[0]
+            )
+            pred_temp=(modelo_mejor.predict(datos_pred_clase.loc[filtro_fecha,]))+error_aleatorio[contar]
+            contar=contar+1
+            datos_pred_clase.loc[filtro_fecha,"Y"]=pred_temp
+        df_2021_2022=pd.concat([df_2021_2022,datos_pred_clase],axis=0)
+        df_2021_2022["Y"]=df_2021_2022["Y"].astype(int)
+    return df_2021_2022
+```
+
+<!-- #region tags=[] -->
+# Introducción 
+
+Medellín es una de las ciudades densamente pobladas en el mundo, en el 2015 la ONU clasifico a Medellín en la tercera ciudad con mas habiltantes por $km^2$ en el mundo. Por otra parte en el 2017 Medellín ocupo el primer lugar en accidentalidad con respecto al país lo cual es un dato preocupante ¿como ha sido la tendencia? ¿que soluciones pueden existir? En MEData se cuenta con una base de datos con 270,759 accidentes entre los año 2014 y 2020.
+
+# Objetivos
+
+- Pronosticar el número de accidentes entre los año 2021 y 2022 por clase de accidente ya que aun no se cuenta con información actualizada.
+
+- Clasificar los barrios de medellín para identificar las zonas con mayor accidentalidad y dar sugerencias.
+
+# Exploración de los datos
+
+Con la lectura de datos se analiza el tipo de accidentes.
+
+<!-- #endregion -->
+
+```{python}
+datos=pd.read_csv("incidentes_viales.csv",sep=",")#,encoding='ansi',engine="python")
+datos["CLASE_ACCIDENTE"].value_counts(dropna=False)
+```
+
+<!-- #region tags=[] -->
+En la Table 1 se observa los tipos de accidente que hay, en este caso existen 6 registros NA y la Caída ocupante esta escrita de multiples formas, se elimina el NA y se unifica Caida ocupante.
+
+Otra cosa que se observa es que el accidente mas frecuente es de choque, pero Incendio es poco frecuente ya que son 6 accidentes por año para el modelo predictivo esto esta mas allá del alcance de un modelo matematico para alcanzar una predicción, por lo tanto se excluye este tipo de accidente para el modelo predictivo.
+
+
+<!-- #endregion -->
+
+```{python}
+filtro=datos["CLASE_ACCIDENTE"].isna() # omit na 
+datos=datos[~filtro] # filtro
+diccionario_temp={'Caida Ocupante':"Caida ocupante",
+                  'Caída de Ocupante':"Caida ocupante",
+                  'Caída Ocupante':"Caida ocupante", 
+                  'Caida de Ocupante':"Caida ocupante"} 
+datos["CLASE_ACCIDENTE"]=datos["CLASE_ACCIDENTE"].replace(diccionario_temp)
+diccionario_temp={"Solo da\xF1os":"Solo daños"}
+datos["GRAVEDAD_ACCIDENTE"]=datos["GRAVEDAD_ACCIDENTE"].replace(diccionario_temp)
+dicc_temp={'2019\\r':"2019"}
+datos["AÑO"]=datos["AÑO"].replace(dicc_temp)
+datos.isna().sum()
+```
+
+<!-- #region tags=[] -->
+En la Table 2 se observa las columnas de data frame con la cantidad de NA que contiene, como uno de los propositos es la agrupación por barrios se debe analizar mas a fondo la columna BARRIO ya que cuenta con mas de 19006 registros NA, sin embargo la localización geografica no contiene NA por lo que puede servir para recuperar información de ese barrio ya que a la hora de digitar pueden suceder varios eventos como en el registro no se tiene claro el barrio en su momento.
+
+## Preparación datos modelo
+
+
+### Preparación de  datos modelo de agrupamiento
+
+Para agrupar los barrios de Medellín  se usara un shape que contiene el mapa de Medellín discriminado por los barrios. Y además otro shape que contiene las vías en zona urbana y rural de medellín.
+
+Los datos cuentan con el registro de latitud y longitud por cada accidente, también cuenta con el nombre de cada barrio.
+
+<!-- #endregion -->
+
+```{python tags=c()}
+shapefile = geopandas.read_file("Barrio_Vereda.shp") 
+shapefile=shapefile[["NOMBRE", "SHAPEAREA", "SHAPELEN", "geometry"]]
+tabla_temp=pd.DataFrame({"Mapa":shapefile.NOMBRE.nunique(), "Datos":datos.BARRIO.nunique()}, index=["Cantidad de barrios"])
+tabla_temp
+```
+
+En la Table 3 se observa que los datos de MEData se tienen 490 barrios, mientras que en el shape cuenta con información de 320 barrios para este caso como se desea realizar un analisis geo espacial se trabaja con el shape.
+
+Pasos a seguir: 
+
+* Las coordenadas que se encuentran en MEData tienen un sistema de referencia crs: ITRF94, se transforman los datos en formato geopandas (en python especificando el sistema de referencia).
+
+* Luego se trabajara con un sistema de referencia crs: EPSG:4326, por ende para todo analisis espacial en este trabajo es con este sistema de referencia.
+
+* Se realiza una intersección del mapa de Medellín con los datos.
+
+```{python tags=c()}
+# str to list
+# list_columns=["FECHA_ACCIDENTE","CLASE_ACCIDENTE","BARRIO","LOCATION" ]
+# datos=datos[list_columns]
+datos["LOCATION"]=datos["LOCATION"].apply(lambda x: ast.literal_eval(x))
+# dataframe to geopandas
+# sistema de referencia datos : ITRF94
+gdf = geopandas.GeoDataFrame( 
+    datos, geometry=geopandas.points_from_xy(datos.LOCATION.apply(lambda x: x[0]),
+                                             datos.LOCATION.apply(lambda x: x[1]),
+                                            crs="ITRF94"))
+# cambiar sistema de refencia 
+# sistema de refencia de barrios es: EPSG:4326
+gdf=gdf.to_crs("EPSG:4326")
+# join barrios medellin y datos
+datos_join=geopandas.sjoin(gdf,shapefile , how='left') 
+filtro_mapa=(datos_join.SHAPEAREA.isna())
+datos_join.loc[filtro_mapa, "NOMBRE"]=datos_join.loc[filtro_mapa, "BARRIO"]
+datos_join.loc[filtro_mapa,"BARRIO"].value_counts(dropna=False)
+tabla_temp=pd.DataFrame(datos_join.loc[datos_join.SHAPEAREA.isna(),"BARRIO"].value_counts(dropna=False))#.sum()
+tabla_temp=pd.concat([tabla_temp,pd.DataFrame({"BARRIO":int(tabla_temp.sum())},index=["Total"])],axis=0)
+tabla_temp
+```
+
+En la Table 4 se tiene la frecuencia por barrios que no se encuentran en el mapa. Luego de hacer la intersección entre los barrios, aquellos que no se encuentran en el mapa tiene los siguientes nombres estos datos no se incluiran en los modelos por que según la geo localización no pertenecen a Medellín donde pueden pertenecer a municipios aledaños o de alguna manera no se digito bien la información.
+
+
+
+```{python}
+datos_join=geopandas.sjoin(shapefile,gdf , how='inner') 
+```
+
+De los 270,759 accidentes que se encuentran registrados solo se considera que ocurrieron en la ciudad de Medellín 250,481.
+
+Antes de agrupar por año se inicia agrupando el comportamiento anual.
+
+### Preparación de  datos modelo agrupamiento
+
+
+
+
+
+### Preparación de  datos modelo predictivo
+
+```{python}
+datos_join["FECHA_ACCIDENTE_"]=pd.to_datetime(datos_join["FECHA_ACCIDENTE"].apply(lambda x:x.split(" ")[0]+" 00:00:00")) # x.replace("Sin Inf","00:00:00") ))
+pd.DataFrame({"Fecha minima":[datos_join["FECHA_ACCIDENTE_"].min()],
+             "Fecha maxima":[datos_join["FECHA_ACCIDENTE_"].max()],
+             "Días": [(datos_join["FECHA_ACCIDENTE_"].max()-datos_join["FECHA_ACCIDENTE_"].min()).days]})
+```
+
+<!-- #region tags=[] -->
+En la Table 5 se observa que el periodo de tiempo que comprende los datos esta entre el 8 de Enero del 2014 al 8 de Diciembre del 2020, un total de 2526 días de información.
+
+
+
+Para realizar un modelo predictivo de los accidentes a futuro se debe tener en cuenta que en el data frame cada fila representa un solo accidente y como el objetivo es predecir por tiempo la cantidad de accidentes, definimos:
+
+* $Y_{(t,a)}:$ El número de accidentes en el día $t$ en la ciudad de Medellín en el tipo de accidente $a$. Para obtener esta variable se realiza lo siguiente.
+
+* $t$: El día en el calendario, día, mes, año.
+
+* $a$: El tipo de accidente (excluyendo incendio)
+
+Para construir un data frame con la base de datos se seguiran los siguientes pasos:
+
+<b><center> pasos a seguir </center></b>
+
+* Cada fila representa un accidente, se crea una columna $Y=1$.
+
+* Se crea un dataframe (datos_modelo) con la columna que contenga los tipos de accidentes (excluyendo los incendios) y por cada tipo se generan fechas por día según la Table 2.
+
+* Con este data frame se realiza un join, datos_modelo left join datos (con intersección mapa).
+
+* Con la union de estos datos los na en la variable respuesta se remplazan por 0, es decir, estos días no hubo registro de algún tipo de accidente.
+
+* Estos resultados se agrupan por tipo de accidente y fecha del accidente y sumando la columna Y.
+
+<!-- #endregion -->
+
+```{python}
+datos_temp=pd.DataFrame(pd.date_range(start=datos_join["FECHA_ACCIDENTE_"].min(),
+                                      end=datos_join["FECHA_ACCIDENTE_"].max()))
+len_accidentes=datos_join["CLASE_ACCIDENTE"].nunique()
+datos_join["Y"]=1 # cantidad de accidentes
+seq_dias=datos_temp.shape[0] # secuencia de dias
+tipo_accidente=np.repeat( datos_join["CLASE_ACCIDENTE"].unique(),(seq_dias))  # tipo por la secuencia del tiempo
+datos_modelo=pd.DataFrame({"FECHA_ACCIDENTE":list(datos_temp[0])*len_accidentes,
+                          "CLASE_ACCIDENTE":tipo_accidente } )
+datos_modelo=datos_modelo.merge(datos_join[["CLASE_ACCIDENTE","Y","FECHA_ACCIDENTE_"]],
+                                how="left",
+                                left_on=["FECHA_ACCIDENTE","CLASE_ACCIDENTE"], 
+                                right_on=["FECHA_ACCIDENTE_","CLASE_ACCIDENTE"])
+datos_modelo["Y"]=datos_modelo["Y"].fillna(0)
+datos_modelo=datos_modelo.groupby(["CLASE_ACCIDENTE","FECHA_ACCIDENTE"]).sum().reset_index()
+datos_modelo=datos_modelo.sort_values(["CLASE_ACCIDENTE","FECHA_ACCIDENTE"])
+datos_modelo=caracteristicas_fecha(datos_modelo, "FECHA_ACCIDENTE")
+datos_modelo.head(5)
+```
+
+En la Table 6 se observa la estructura de los datos creados para el modelo, donde se tendrá en cuenta festivos, quincenas, día de la semana, mes y año.
+
+* DIA_SEMANA: El día $t$ es 0, 1, ..., 6 representando el lunes, martes, ..., domingo respectivamente.
+
+* FESTIVO: 1 si el día $t$ representa un festivo en el calendario de Colombia.
+
+* QUINCENA: 1 si cumple que para el día $t$ del mes es 1, 14, 15, fin de mes o un día antes de fin de mes. Esto porque representan días de paga para los colombianos.
+
+* MES: El mes del día $t$.
+
+* YEAR: El año del día $t$.
+
+```{python}
+fig = px.line(datos_modelo, x="FECHA_ACCIDENTE", y="Y", color='CLASE_ACCIDENTE',
+              labels=dict_plots)
+fig.show()
+```
+
+<figcaption>Figura 1: Número de accidentes en Medellín por día y clase de accidente (2014 a 2020) </figcaption>
+
+```{python tags=c()}
+filtro_incendio=datos_modelo["CLASE_ACCIDENTE"]!="Incendio"
+datos_modelo=datos_modelo[filtro_incendio].reset_index().drop(labels="index", axis=1)
+fecha_accidente=datos_modelo[datos_modelo["Y"]>0].groupby(by="YEAR").aggregate({"FECHA_ACCIDENTE":["nunique"],
+                                                                          "FESTIVO":["sum"],
+                                                                         "QUINCENA":["sum"]})
+fecha_accidente.columns=["Días por año","Festivos","Quincenas" ]
+fecha_accidente[["Festivos","Quincenas"]]=(fecha_accidente[["Festivos","Quincenas"]]/5).round()
+fecha_accidente
+```
+
+Tabla 7
+
+En la Figura 1 se observa la cantidad de accidentes por dia desde del año 2014 hasta el 2020, esto para cada tipo de accidente (gráfico iteractivo). Se observa:
+
+* Como se menciono en los pasos a seguir para construir la variable $Y_{(t,a)}$ en el año 2014 y 2020 se observa que en varios intervalos de tiempo que ocurrieron 0 accidentes, esto quiere decir que no hubo registro de accidentes, sin embargo, en 2014 desde enero hasta julio solo se tiene registro de los días 8, 9, 10, 11 y 12 (5 días por mes) y a partir de julio hasta dicimbre no se encuentra registro de los días 1, 2, 3, 4, 5 y 6. Para 2020 sucede algo similar desde Enero hasta agosto no se cuenta registro de accidentes entre los días 9, 10, 11 y 12 también a partir de septiembre solo se tiene registro de los días 1 al 8 de cada mes; todo lo anterior ocurre para todos los tipos de accidente. También en la Table 7 se observa que en total días por año existen registros en todos los días del año excepto 2014 y 2020 (incluso 2016 esta el año bisiesto).
+
+* En este gráfico también se incluyen los incendios, se selecciona este tipo de accidente en 1 día ha ocurrido a lo mas 1 accidente en la granja de tiempo pero no se observa algún tipo de estacionalidad de ocurrencia o tendencia con respecto al tiempo.
+
+* Los tipo de accidente choque presentan mayor accidentalidad que los demás accidentes, los accidentes por caida de ocupante, atropello y otro parece tener un mismo comportamiento promedio en accidentes y variabilidad. Volcamiento es el que presenta menos accidentalidad (excluyendo incendios).
+
+* Por cada tipo de accidente parece existir una componente estacional que no necesariamente es constante.
+
+Según esto para los registros en 0 del  2014 y 2020 se deben considerar como NA entonces se pronone una interpolación para estos datos.
+
+#### Interpolación de datos
+
+Existen muchos metodos de interpolación de datos pero se debe encontrar el mas apropiado para este caso, como se observa en la Figura 1 se tienen 5 series de tiempo (excluyendo incendio) y donde existe una clara componente estacional.
+
+- Se seleccionan las fechas donde se encontro el patrón.
+
+- El número de accidentes lo pasamos de 0 a NA.
+
+- Se gráfica las posibles componentes estacionales para realizar interpolación.
+
+```{python tags=c()}
+filtro_y0=datos_modelo["Y"]==0
+fechas_na=(datos_modelo[filtro_y0].groupby(by="FECHA_ACCIDENTE")["CLASE_ACCIDENTE"].count()==5)
+filtro_fechas_na=datos_modelo['FECHA_ACCIDENTE'].isin(fechas_na.index)
+filtro_2014=datos_modelo['FECHA_ACCIDENTE']<pd.to_datetime("2015-01-01 00:00:00" ) 
+filtro_2020=datos_modelo['FECHA_ACCIDENTE']>=pd.to_datetime("2020-01-01 00:00:00" )
+filtro_grafico=(filtro_2014 | filtro_2020) & (~filtro_fechas_na)
+datos_modelo.loc[(filtro_2014 | filtro_2020) & (filtro_fechas_na), "Y"]=np.nan
+fig = px.box(datos_modelo[filtro_grafico ],
+             x="CLASE_ACCIDENTE", y="Y", color="DIA_SEMANA",
+            facet_row="YEAR",width=900, height=600,labels=dict_plots)
+fig.update_traces(quartilemethod="linear") # or "inclusive", or "linear" by default
+fig.show()
+```
+
+<figcaption> Figura 2: Box plots de cantidad de accidente en día de la semana dado el año (2014 y 2020) y la clase de accidente.</figcaption>
+
+En la Figura 2 se observa que puede existir una componente estacional para algunos casos por día de la semana en el año 2014 y 2020, pero es mas notorio en el 2014.
+
+```{python}
+fig = px.box(datos_modelo[filtro_grafico],
+             x="CLASE_ACCIDENTE", y="Y", color="QUINCENA",
+            facet_row="YEAR",width=900, height=600,labels=dict_plots)
+fig.update_traces(quartilemethod="linear") # or "inclusive", or "linear" by default
+fig.show()
+```
+
+```{python}
+fig = px.box(datos_modelo[filtro_grafico],
+             x="CLASE_ACCIDENTE", y="Y", color="QUINCENA_DESPUES",
+            facet_row="YEAR",width=900, height=600,labels=dict_plots)
+fig.update_traces(quartilemethod="linear") # or "inclusive", or "linear" by default
+fig.show()
+```
+
+<figcaption> Figura 4: Box plots de cantidad de accidente según si es quincena dado el año (2014 y 2020) y la clase de accidente.</figcaption>
+
+En la Figura 4 se observa que los días de quincena tienden a ocurrir mas cantidad de accidentes por cada clase de accidente en ambos años.
+
+No se considero los días festivos por la cantidad de faltantes, el modelo escogido para realizar la interpolación es el metodo lineal ¿por qué? porque los días faltantes estan delimitados por intervalos de tiempo de hasta 15 días donde no hay información y puede ser dificil capturar una tendencia en esos años. La metodología que se uso fue:
+
+Por cada clase se aplica se escogen las combinaciones de dia semana y quincena por cada posibilidad se hace una interpolación lineal para el 2014 y 2020. Se consigue el siguiente resultado. 
+
+```{python tags=c()}
+datos_modelo.loc[(filtro_2014 | filtro_2020) & (filtro_fechas_na), "Y"]=np.nan 
+metodo_="linear"
+clases=list(datos_modelo["CLASE_ACCIDENTE"].unique())
+for clase in clases:      
+    filtro_clase=datos_modelo["CLASE_ACCIDENTE"]==clase
+    for dia_semana in datos_modelo["DIA_SEMANA"].unique():
+        filtro_semana=datos_modelo["DIA_SEMANA"]==dia_semana
+        for quincena_ in range(2):
+            filtro_quincena=datos_modelo["QUINCENA"]==quincena_
+            filtro_temp=(filtro_clase &
+                         filtro_semana &
+                          filtro_quincena)  
+            filtro_temp_2014=(filtro_temp & filtro_2014   )
+            datos_modelo.loc[filtro_temp_2014,'Y']=datos_modelo.loc[filtro_temp_2014,'Y'].interpolate(method = metodo_,
+                                                                                                      limit_direction = 'both')
+            filtro_temp_2020=(filtro_temp & filtro_2020  )
+            datos_modelo.loc[filtro_temp_2020,'Y']=datos_modelo.loc[filtro_temp_2020,'Y'].interpolate(method = metodo_,
+                                                                                                      limit_direction = 'both')    
+datos_modelo["Y"]=datos_modelo["Y"].astype(int)
+fig = px.line(datos_modelo, x="FECHA_ACCIDENTE", y="Y", color='CLASE_ACCIDENTE',labels=dict_plots)
+fig.show()
+```
+
+<figcaption> Figura 5: Inputación de número de accidentes $Y_{(t,a)}$. </figcaption>
+
+En la Figura 5 se observa los datos interpolados del 2020 y 2014, aunque no se siga la tendencia en el 2014 si parece capturar la media en el tiempo, sin embargo el 2014 no es necesariamente el año importante. Para pronosticar el año 2021 y 2022 es importante capturar la tendencia del 2020, y en el 2020 parece que la imputación de los datos ser buena.
+
+#### Analisis estacional
+
+Luego que tanto puede influir las posibles componentes estacionales en el número de accidentes en Medellín?
+
+```{python}
+fig = px.box(datos_modelo,
+             x="CLASE_ACCIDENTE", y="Y", color="DIA_SEMANA",labels=dict_plots)
+fig.update_traces(quartilemethod="exclusive") # or "inclusive", or "linear" by default
+fig.show()
+```
+
+<figcaption> Figura 6: Box plot Número de accidentes por día de la semana dado la clase de accidente. </figcaption>
+
+En la Figura 6 se observa que para el tipo de accidente por choque puede ser influyente el día de la semana con el número de accidentes. 
+
+```{python tags=c()}
+fig = px.box(datos_modelo,
+             x="CLASE_ACCIDENTE", y="Y", color="FESTIVO",labels=dict_plots)
+fig.update_traces(quartilemethod="exclusive") # or "inclusive", or "linear" by default
+fig.show()
+```
+
+```{python}
+fig = px.box(datos_modelo,
+             x="CLASE_ACCIDENTE", y="Y", color="QUINCENA_DESPUES",labels=dict_plots)
+fig.update_traces(quartilemethod="exclusive") # or "inclusive", or "linear" by default
+fig.show()
+```
+
+<figcaption> Figura 8: </figcaption>
+
+
+<figcaption> Figura 8: Box plot Número de accidentes por si es festivo o no dado la clase de accidente. </figcaption>
+
+En la Figura 8 se observa que para el tipo de accidente por choque puede ser influyente si hay festivo o no, para los otros tipos no parece significativo pero en general existe una tendencia a ocurrir menos accidentes en los días festivos.
+
+
+
+<figcaption> Figura 2: Box plot de $Y_t$ discriminado por clase de accidente y Año. </figcaption>
+
+En la Figura 2 se observa que el día de la semana se puede considerar para algunos tipos como accidentes por choque como estacionales, se puede pensar en un modelo que contenga estacionalidad por día de la semana, también se observa que para el año 2020 parece existir una matyor variabilidad donde existen menos ocurrencia de accidentes esto por supuesto debido a la pandemia que inicio en Colombia en el mes de abril. 
+
+Por lo observado en la Figura 1 y 2 para este trabajo se usaran modelos adaptativos lineales se sugiere replicar un modelo AR con regresión lineal como se muestra en la siguiente ecuación.
+
+\begin{equation}
+Y_t=\beta_0 +\sum_{i=1}^k \gamma_i Y_{t-i}+ \sum_{j=0}^6 \alpha_j \text{diasemana}_j+ \sum_{l \in \text{clases accidentes}}\theta_l\text{claseaccidente}_l  
+\end{equation}
+
+Este es nuestro modelo inicial de referencia.
+
+Para ajustar los modelos no se tendra en cuenta el año 2014 y en el año 2020 solo se considera hasta  el 9 de septiembre por lo observado en la Figura 1.
+
+```{python}
+tiempos_atras=14
+datos_modelo_atras=historia_atras(datos_modelo, "Y","CLASE_ACCIDENTE",tiempos_atras )
+variables_y=["Y",*[ "Y"+str(i) for i in range(1,tiempos_atras+1) ]]
+datos_modelo_atras=datos_modelo_atras.sort_values(["CLASE_ACCIDENTE","FECHA_ACCIDENTE"])
+datos_modelo_atras=datos_modelo_atras.reset_index().drop(labels="index",axis=1)
+```
+
+# Modelos predictivos
+
+En esta sección como ya se tiene una estructura de datos para la creación de un modelo se debe tener en cuenta:
+
+* Como se realizara predicción a futuro siempre habrá una extrapolación.
+
+* Se partiran los datos en 2 periodos de tiempo, datos de entrenamiento 2015 al 2018, datos de prueba 2019 al 2020.
+
+
+
+
+```{python}
+datos_modelo_atras["DIA_SEMANA"]=datos_modelo_atras["DIA_SEMANA"].astype(str)
+datos_modelo_atras_numerico=datos_modelo_atras.copy()#.reset_index().drop(labels="index",axis=1).copy()
+filtro_validacion=datos_modelo_atras_numerico["YEAR"]<=2018
+datos_train=datos_modelo_atras_numerico[filtro_validacion].copy()
+datos_test=datos_modelo_atras_numerico[~filtro_validacion].copy()
+variables_=pd.Series(list(datos_train))
+var_omit=["FECHA_ACCIDENTE","MES","YEAR","DIA_MES",*variables_y[5:7],*variables_y[8:14],"Y"]
+variables_=list(variables_[~variables_.isin(var_omit)])
+# variables_=[*variables_, "Y7*CLASE_ACCIDENTE","Y1*CLASE_ACCIDENTE","Y14*CLASE_ACCIDENTE" ]
+formulas_=powerset(variables_, "Y")
+formulas_=pd.Series(formulas_)#+"+CLASE_ACCIDENTE"
+filtro_variables=lambda x: (len(x.split("+"))>4) & (len(x.split("+"))<10)
+formulas_=list(formulas_[formulas_.apply(filtro_variables  )])
+tabla_variables=np.array(variables_)
+tabla_variables.shape=(4,3)
+pd.DataFrame(tabla_variables)
+```
+
+En la Table 8 se observan las variables que se van a considerar para predecir $Y_{(t,a)}$, 
+
+* Luego se usan todas las posibles combinaciones de variables para predecir la respuesta solo con modelos de 5 a 9 generando 3223 ecuaciones.
+
+* Por cada modelo se ajusta una regresión lineal con los datos de entrenamiento, para estos modelos se usa una regulación con la librería statmodels con el metodo fit_regularized usando un $\alpha=0.1$, es decir, una penalización de 0.1 para las variables y usando un $l_1=0.1$ de la técnica lasso, esto por que a la hora de predecir el año 2021 y 2022 los modelos convergian a una sola media para cualquier tipo de accidente y esta fue una alternativa para solucionar dicho problema. 
+
+* se pronóstica  por separado los datos de entrenamiento y prueba calculando por cada uno el MAE.
+
+$$\text{MAE}=\sum_{i=1}^{n} \frac{y_i-\hat{y}_i}{n}$$
+
+* Se calcula la variación porcentual del mae entre los datos de entrenamiento y prueba:
+
+$$\text{VARMAE}=\left(\frac{\text{MAE}_{\text{train}}-\text{MAE}_{\text{test}} } 
+{\text{MAE}_{\text{train}}}\right)\text{x}100$$
+
+* Luego solo se aceptaran modelos con $\text{VARMAE}<15\%$.
+
+```{python tags=c()}
+# resultados=validacion_mult_modelos(datos_train,datos_test,formulas_)
+# resultados["Variación validación (MAE)"]=100*abs(resultados["MAE train"]-resultados["MAE test"])/resultados["MAE train"]
+# resultados.to_csv("validacion_modelos.csv", index=False)
+resultados=pd.read_csv("validacion_modelos.csv")
+resultados.describe().iloc[1:,]
+```
+
+En la Tabla 9: 3223 De los modelos se encontro que el \% de variación no supero el 15\%, es decir, no existe sobre ajuste y se encontro que el 75\% cuenta con un error promedio menor a 6.5 accidentes por día sin importar el tipo de accidente.
+
+Luego se busco los modelos con menor error mae y se analizó el ajuste por cada clase de accidente y se escogió el siguiente modelo.
+
+El modelo seleccionado es:
+
+$$Y_{t,a}= \beta_0+\alpha_7 Y_{t-7,a}+\sum_{i=1 }^{5}\gamma_i I_{(a)i}+\theta_1 \text{fin semana}+  \theta_2 \text{festivo}+ \theta_3 \text{despues de quincena} + \epsilon $$
+
+con $I_{(a)i}$ 1 si es el i-ésimo tipo de accidente, por el contrario 0. festivo 1 si el día es festivo. festivo, fin semana, despues de quincena son 1 si el día es un fin de semana, un día festivo, un 1 o 16 día de mes, 0 en caso contrario respectivamente.
+
+El metodo fit_regularized todavia no tiene una documentación profunda donde se hable del supuesto de dicho modelo ya los parámetros no se estiman con minimos cuadrados sino que tienen una penalización.
+
+```{python tags=c()}
+formula_final= 'Y~Y7+CLASE_ACCIDENTE+FIN_SEMANA+FESTIVO+QUINCENA_DESPUES'
+modelo_temp=ajuste_modelos(datos_train,formula_final)
+datos_predict=datos_modelo_atras.copy()
+datos_predict["Y_predict"]=modelo_temp.predict(datos_predict)
+datos_predict["residuales"]=datos_predict["Y"]-datos_predict["Y_predict"]
+fig = px.line(datos_predict, 
+              x="FECHA_ACCIDENTE", 
+              y=["Y","Y_predict"], 
+              facet_row="CLASE_ACCIDENTE",
+              labels=dict_plots,width=900, height=1200)
+fig.show()
+
+```
+
+<figcaption>  Figura 9: Modelo seleccionado ajuste entrenamiento, pronóstico de entrenamiento y prueba.  </figcaption>
+
+En la Figura 9 se observa que captura la medio y la componente ciclica que ocurre en 2020, como se observa las predicciones estan mas centradas que el valor real y es capaz de predecir la media, aunque con los demás modelos no se encontro gran diferencia este es el seleccionado ya que contiene indicadores de días que pueden ser importantes como fin de semana, festivo y fin de mes.
+
+```{python}
+fig = px.line(datos_predict,
+              x="FECHA_ACCIDENTE",
+              y="residuales",
+              color="CLASE_ACCIDENTE",
+              labels=dict_plots,)
+fig.show()
+
+```
+
+<!-- #region -->
+<figcaption> Figura 10: Residuales del modelo seleccionado. <figcaption>
+    
+En la Figura 10 se observan los residuales que se centran en 0, en algunas fracciones de tiempo parece existir una homogeneidad en la varianza lo cual es bueno para sugerir que los pronosticos a futuro tendrían una variación en el error constante, sin embargo se debe tener en cuenta la extrapolación ya que se debe pronósticar 2021 y 2022.
+    
+    
+El pronóstico para $Y_{(t,a)}$ para cada uno desde la ultima fecha cuando un $Y$ no tiene conocimientos del valor real de $Y_{(t-k,a)}$ se debe considera la estimación de este con el modelo.
+<!-- #endregion -->
+
+```{python}
+datos_predict_2022=pronostico_2021_2022(datos_modelo_atras_numerico,formula_final)
+modelo_final=ajuste_modelos(datos_modelo_atras_numerico,formula_final)
+fig = px.line(datos_predict_2022, x="FECHA_ACCIDENTE", y="Y", color="CLASE_ACCIDENTE",labels=dict_plots)
+fig.show()
+```
+
+<figcaption> Figura 11: Pronóstico del número de accidentes  2021 y 2022 <figcaption>
+    
+En la Figura 11 se observa que este modelo asigna una media para el choque y al final converge a una media sin mostrar ningún tipo de variación, esto fue observado en los modelos que se probo donde al final por tratar de pronosticar periodos de mas de 2 años los modelos no logran captar el error donde se llega a una media estandar lo cual en terminos practicos no tiene sentido. No se consiguio otro modelo que fuera mejor y considere las fechas estacionales, este modelo no funciona para predecir a largo plazo, los modelos considerando las fechas especiales sin el número de accidentes hacia atras solo consigen una linea horizontal y recta ocasionando un error en el pronóstico.
+
+```{python}
+datos_predict_2022.groupby("CLASE_ACCIDENTE")["Y"].mean()
+```
+
+Tabla 10: Esta es la media que se obtiene 
+
+El ruido es algo que no se puede medir en estos casos teniendo en cuenta que los $Y_{(t-k,a)}$ para largo plazo son estimaciones esto puede ser la causa de una convergencia, para este caso se planteo a cada $\hat{Y}_{(t-k,a)}$ sumar un error que dependa de la clase, se saca una muestra para cada clase con  $e\sim N(0,\sigma_a)$ y donde $\sigma_a=w_a \sigma$, y $\sigma$ es la desviación estandar de los errores y los $w_a= \frac{\bar{Y_a}}{\sum\bar{Y_a}} $  y la estimación de $\hat{Y}_{(t-k,a)}$ se le suma una muestra areatoria de $N(0,\sigma_a)$
+ 
+
+```{python}
+datos_predict_2022=pronostico_2021_2022(datos_modelo_atras_numerico,formula_final,True)
+modelo_final=ajuste_modelos(datos_modelo_atras_numerico,formula_final)
+fig = px.line(datos_predict_2022, x="FECHA_ACCIDENTE", y="Y", color="CLASE_ACCIDENTE",labels=dict_plots)
+fig.show()
+```
+
+Figura 12: En este caso sigue existiendo una convergencia en la media del pronóstico y nos da la misma información de la Figrua anterior pero al usuario es mas conveniente mostrar este tipo de gráficos.
+
+```{python}
+smf.ols(formula_final,datos_modelo_atras_numerico ).fit().scale**0.5
+```
+
+```{python}
+datos_predict_2022.groupby("CLASE_ACCIDENTE")["Y"].mean()
+```
+
+Tabla 11
+
+```{python}
+# pronostico_final=pd.concat([datos_modelo_atras_numerico,datos_predict_2022],axis=0)
+# pronostico_final[["FECHA_ACCIDENTE","Y","CLASE_ACCIDENTE"]].to_csv("datos_pronostico_2021_2022.csv",index=False)
+```
+
+### Preparación de  datos modelo de agrupamiento
+
+Para agrupar los barrios de medellín  se usara un json que contiene el mapa de medellín discriminado por los barrios. Como se observo para el modelo predictivo no hay información suficiente en el año 2020, se piensa extraer la información de los años 2016 ,2017, 2018 y 2019
+
+
+
+```{python}
+year_cluster=[str(year)  for year in range(2015,2020) ]
+filtro_year=datos_join.AÑO.isin(year_cluster)
+datos_temp=(datos_join[filtro_year]).copy()
+```
+
+```{python tags=c()}
+datos_temp=(datos_join[filtro_year]).copy()
+df_cluster_one=datos_temp.groupby(["AÑO","NOMBRE","SHAPEAREA"  ])["CBML"].count().reset_index().copy()
+df_cluster_one=df_cluster_one.pivot(index=["NOMBRE","SHAPEAREA"],columns="AÑO",values="CBML").fillna(0)
+var_accidentes=["ACCIDENTES_1000KM2_"+ year for year in year_cluster ]
+var_muertes=["MUERTES_" +  year for year in year_cluster]
+df_cluster_one.columns=var_accidentes
+datos_temp=datos_temp[datos_temp["GRAVEDAD_ACCIDENTE"]=="Con muertos"]
+df_cluster_2=datos_temp.groupby(["AÑO","NOMBRE","SHAPEAREA"  ])["CBML"].count().reset_index().copy()
+df_cluster_2=df_cluster_2.pivot(index=["NOMBRE","SHAPEAREA"],columns="AÑO",values="CBML").fillna(0)
+df_cluster_2.columns=var_muertes
+df_cluster=pd.concat([df_cluster_one,df_cluster_2],axis=1).fillna(0)
+areas_=np.array(df_cluster.reset_index()["SHAPEAREA"])
+
+for var in var_accidentes:
+    df_cluster[var]=(df_cluster[var]/areas_)*1000
+df_estandar=estandarizacion(df_cluster,list(df_cluster))
+dic_plot_cluster={}
+for i in year_cluster:
+    dic_plot_cluster.update({"ACCIDENTES_1000KM2_"+i: "Accidentes por 1000 Km2 "+i})
+    dic_plot_cluster.update({"MUERTES_"+i: "Muertes en "+i})
+    
+```
+
+```{python}
+distortions = []
+for i in range(2, 11):
+    km = sklearn.cluster.KMeans(
+        n_clusters=i, init='random',
+        n_init=10, max_iter=300,
+        tol=1e-04, random_state=0
+    )
+    km.fit(df_estandar)
+    distortions.append(km.inertia_)
+px.line(y= distortions,x=range(2, 11),labels={"y":"Score","x":"Num cluster" })
+```
+
+<figcaption> Figura 13: Score de insercia por k-means </figcaption>
+
+En la Figura 13 se observa 
+
+
+```{python}
+df_cluster["CLUSTER"]=kmeans(df_estandar,list(df_estandar), 4,1)
+df_cluster["CLUSTER"]=df_cluster["CLUSTER"].replace({0:"Grado menor",
+                                                    1:"Grado alto",
+                                                    2:"Grado moderado",
+                                                    3:"Grado alarma"})
+```
+
+```{python}
+fig = px.box(df_cluster, y=var_accidentes,color="CLUSTER",labels=dic_plot_cluster)
+fig.show()
+```
+
+Figura 14
+
+Viendo la distribucion en el boxplot del numero de accidentes por 1.000 km2, podemos concluir que, los diferentes clusters se diferencian por numero de accidentes. Siendo el cluster "alarma" el que presenta la mayor cantidad de accidentes por 1.000 km2. 
+
+Tambien podemos ver que, los clusters estan lo suficientemente diferenciados en cuanto a esta metrica.
+
+```{python}
+fig = px.box(df_cluster, y=var_muertes,color="CLUSTER",labels={"variable":"Año",
+                                                               "value":"Muertes por accidente"})
+fig.show()
+```
+
+<!-- #region -->
+<figcaption> Figura 15 </figcaption> 
+
+Viendo la distribucion podemos ver que ocurre una diferenciacion similar a la metrica anterior, pero en este caso, podemos ver que los clusters de "alto" y "moderado" tienen un tipo de corte. 
+
+
+En conclusion, podemos ver que los clusters si agrupan los barrios dependiendo de su accidentalidad. Tambien, la mortalidad en el cluster "moderado" tiene una tendencia a reducirse. La mortalidad del grupo "alarma" tuvo su cuspide en el año 2016, y despues de ahi disminuyo. El grupo "alto" se mantuvo muy estable. en el año 2018 los clusters "alto" y "alarma" fueron muy parecidos. 
+<!-- #endregion -->
+
+
+
+
+```{python}
+# import jupytext
+# jupytext --to analisis_inicial.Rmd 
+```
+
+```{python}
+# fig
+# df_cluster.to_file("barrios_cluster.shp")
+```
+
+# Conclusiones
+
+La predicción con los criterios exigidos no se logro con exito ya que los modelos que se probaron convergen.
+
+
+
+
+# Referencias
+
+https://www.bluradio.com/blu360/antioquia/que-significa-que-medellin-sea-la-tercera-ciudad-mas-densamente-poblada-del-mundo
+
+https://www.concejodemedellin.gov.co/es/node/1024?language_content_entity=es
+
+https://www.medellin.gov.co/giscatalogacion/srv/spa/catalog.search#/metadata/4f8b2fa9-8f9a-425f-a205-07b52e7d6aae
+
+https://geomedellin-m-medellin.opendata.arcgis.com/datasets/vias-urbano-rural/explore?location=6.378506%2C-75.493262%2C10.09

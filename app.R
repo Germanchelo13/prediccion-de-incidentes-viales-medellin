@@ -1,10 +1,9 @@
 library(sf) # manupulación geolocalizaciones
-library(mapview)
-
-
-# library(tmap)  # graficos interactivos de mapas
-library(leaflet)
+# library(mapview)
+# # library(tmap)  # graficos interactivos de mapas
+# library(leaflet)
 library(dplyr) # manejo de funciones
+library(ggrepel)
 library(shiny) # aplicacion
 library(plotly) # graficos 
 library(shinydashboard)
@@ -19,32 +18,33 @@ url_github<-"https://github.com/Germanchelo13/prediccion-de-incidentes-viales-me
 mapa_medellin<-st_read('barrios_cluster.shp')
 prediccion<-read.csv("datos_pronostico_2021_2022.csv")
 prediccion$FECHA_ACCIDENTE_ <-(as.POSIXct(prediccion$FECHA_ACCIDENTE, format="%Y-%m-%d", tz="UTC")) 
-var_clusters<-c('ACCIDENTES_1000KM2_2015', 'ACCIDENTES_1000KM2_2016',
-                'ACCIDENTES_1000KM2_2017', 'ACCIDENTES_1000KM2_2018',
-                'ACCIDENTES_1000KM2_2019', 'MUERTES_2015', 'MUERTES_2016',
+var_clusters<-c("CLUSTER",'ACCIDENTES_100KM2_2015', 'ACCIDENTES_100KM2_2016',
+                'ACCIDENTES_100KM2_2017', 'ACCIDENTES_100KM2_2018',
+                'ACCIDENTES_100KM2_2019', 'MUERTES_2015', 'MUERTES_2016',
                 'MUERTES_2017', 'MUERTES_2018', 'MUERTES_2019')
+
 names(mapa_medellin)<-c('BARRIO', 'SHAPEAREA', 'SHAPELEN', 
-                        'ACCIDENTES_1000KM2_2015', 'ACCIDENTES_1000KM2_2016',
-                        'ACCIDENTES_1000KM2_2017', 'ACCIDENTES_1000KM2_2018',
-                        'ACCIDENTES_1000KM2_2019', 'MUERTES_2015', 'MUERTES_2016',
+                        'ACCIDENTES_100KM2_2015', 'ACCIDENTES_100KM2_2016',
+                        'ACCIDENTES_100KM2_2017', 'ACCIDENTES_100KM2_2018',
+                        'ACCIDENTES_100KM2_2019', 'MUERTES_2015', 'MUERTES_2016',
                         'MUERTES_2017', 'MUERTES_2018', 'MUERTES_2019', 'CLUSTER','geometry'
                         )
-mapa_medellin$descripcion<-paste(
-  "<br> <center> Accidentes por 1000 km2 </center> ",
-  "<br> Año 2015: ",round(mapa_medellin$ACCIDENTES_1000KM2_2015),
-  "<br>  Año 2016: ", round(mapa_medellin$ACCIDENTES_1000KM2_2016),
-  "<br>  Año 2017: ", round(mapa_medellin$ACCIDENTES_1000KM2_2017),
-  "<br>  Año 2018: ", round(mapa_medellin$ACCIDENTES_1000KM2_2018),
-  "<br> Año  2019: ", round(mapa_medellin$ACCIDENTES_1000KM2_2019),
-  "<br> <center> Muertes </center>    ",
-  "<br> Año 2015:  ",round(mapa_medellin$MUERTES_2015),
-  "<br> Año 2016: ", round(mapa_medellin$MUERTES_2016),
-  "<br> Año 2017: ", round(mapa_medellin$MUERTES_2017),
-  "<br> Año 2018: ", round(mapa_medellin$MUERTES_2018),
-  "<br> Año 2019: ", round(mapa_medellin$MUERTES_2019),
-  sep=""
-  
-  )
+for (var_ in var_clusters[-1]){
+  indice<-which(is.element(names(mapa_medellin), var_ ))
+  mapa_medellin[[var_]]<-round(mapa_medellin[[var_]], 3)
+} 
+# mapa_medellin[['SHAPELEN']]
+# mapa_medellin$descripcion<-paste(
+#   "Barrio: ", mapa_medellin$BARRIO,
+#   "<br>  Accidentes por 1000 km2  promedio",
+#   "<br> : ",round((mapa_medellin$ACCIDENTES_1000KM2_2015+
+#                mapa_medellin$ACCIDENTES_1000KM2_2016+
+#                mapa_medellin$ACCIDENTES_1000KM2_2017+
+#                mapa_medellin$ACCIDENTES_1000KM2_2018+
+#                mapa_medellin$ACCIDENTES_1000KM2_2019)/5,1),
+#   sep=""
+#   
+#   )
 
 usuario<- fluidPage(
   dashboardPage(
@@ -76,10 +76,11 @@ usuario<- fluidPage(
                                 fluidRow( uiOutput("text_geo") ), 
                                 fluidRow(column(6,
                                                 selectInput(inputId ="cluster" ,label= "Seleccione el cluster",
-                                                            choices =unique(mapa_medellin$CLUSTER),multiple = TRUE)),
+                                                            choices =unique(mapa_medellin$CLUSTER),multiple = F,
+                                                            selected =unique(mapa_medellin$CLUSTER)[1] )),
                                          column(6, selectInput(inputId ="estado" ,label= "Seleccione una Variable",
                                                                choices =var_clusters,multiple = F) ) )
-                                ,fluidRow( leafletOutput("map_plot") )
+                                ,fluidRow( plotlyOutput("map_plot") )
                                ))
                      
               )),
@@ -146,19 +147,21 @@ allowfullscreen></iframe>
   })
   
 
-  output$map_plot<-renderLeaflet({
+  output$map_plot<-renderPlotly({
     # reactive(input$cluster)
     filtro_<- is.null(input$cluster) | is.element(mapa_medellin$CLUSTER,input$cluster)
-    print(sum(filtro_))
-    columnas_<-which( is.element(names(mapa_medellin), 
-                                 c("BARRIO","descripcion","CLUSTER",input$estado )))
-    
-    mapa_medellin_temp=mapa_medellin[filtro_,columnas_]
+    # print(sum(filtro_))
+    # columnas_<-which( is.element(names(mapa_medellin), 
+    #                              c("BARRIO","descripcion","CLUSTER",input$estado )))
+    # 
+    mapa_medellin_temp=mapa_medellin[filtro_,]
     title_<-paste(input$estado)
-    mapview(mapa_medellin_temp ,layer.name=title_,
-            zcol=input$estado)@map
-    # mapview(mapa_medellin)@map#zcol=input[["estador"]])
     
+    fig<- ggplot(mapa_medellin_temp,aes(tooltip=BARRIO))+
+      # geom_text_repel(aes(label=descripcion), size=5)+
+      geom_sf(aes(fill=get(input$estado ) ))
+    plotly::ggplotly( fig )
+
 }
    )
 
